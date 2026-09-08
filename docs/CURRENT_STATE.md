@@ -2,13 +2,11 @@ Drop — Current State
 
 Project status
 
-Project bootstrap in progress.
-
-No application code has been implemented yet.
+Project bootstrap is complete and Windows protocol-core implementation is in progress.
 
 Current milestone
 
-Day 0 — Repository and project foundation.
+Day 1 Task 1 — Windows/.NET protocol core and automated tests (completed).
 
 Completed
 
@@ -21,6 +19,11 @@ Completed
 -   docs/ROADMAP.md created
 -   platform directories created for Windows, iOS, and Android
 -   protocol directory created
+-   .NET 10 Windows solution created under apps/windows
+-   reusable Drop.Protocol library created separately from future UI
+-   Protocol v1 length-prefixed JSON control-frame codec implemented
+-   control-frame tests cover round trips, Unicode, fragmented reads, size validation, truncation, and invalid JSON
+-   Release build and all automated tests pass
 
 In progress
 
@@ -33,7 +36,6 @@ Not started
 
 Windows
 
--   Windows solution/project
 -   TCP sender
 -   TCP receiver
 -   file streaming
@@ -63,34 +65,15 @@ Direct peer-to-peer
 -   Wi-Fi Aware investigation/implementation
 -   Windows direct P2P investigation/implementation
 
-Next milestone
+Exact next task
 
-Day 1 — Windows transfer core.
-
-The first implementation milestone must prove:
-
-1.  A file can be streamed from a Windows sender to a Windows receiver
-    over TCP.
-2.  The full file is never loaded into memory.
-3.  The receiver writes to a temporary partial file.
-4.  SHA-256 integrity verification succeeds for valid transfers.
-5.  Corrupt or mismatched transfers are rejected.
-6.  The received file is bit-for-bit identical to the source.
-7.  Automated tests and builds pass.
-
-Immediate next tasks
-
-1.  Finish docs/TESTING.md.
-2.  Finish protocol/SPEC.md.
-3.  Finish README.md.
-4.  Review bootstrap documentation for consistency.
-5.  Create the initial Git commit.
-6.  Push the bootstrap repository to GitHub.
-7.  Begin Day 1 Windows transfer-core implementation.
+Day 1 Task 2 — implement the Windows TCP sender and receiver transfer path using
+the protocol core, streamed file payloads, temporary partial files, and SHA-256
+integrity verification.
 
 Known issues
 
-None yet. Application implementation has not started.
+TCP networking and file-transfer behavior are not implemented yet.
 
 Important constraints
 
@@ -107,4 +90,4 @@ Important constraints
 
 Last updated
 
-2026-09-09 — Initial project bootstrap.
+2026-09-09 — Day 1 Task 1 protocol-core scaffold completed.
