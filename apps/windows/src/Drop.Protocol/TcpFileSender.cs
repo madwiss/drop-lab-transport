@@ -17,7 +17,8 @@ public sealed class TcpFileSender(DeviceInfo localDevice)
         string sourcePath,
         string? remoteFileName = null,
         IProgress<FileTransferProgress>? progress = null,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        IProgress<SendStage>? stageProgress = null)
     {
         ArgumentNullException.ThrowIfNull(endpoint);
         ArgumentException.ThrowIfNullOrWhiteSpace(sourcePath);
@@ -33,6 +34,7 @@ public sealed class TcpFileSender(DeviceInfo localDevice)
         string offeredName = remoteFileName ?? source.Name;
         long size = source.Length;
 
+        stageProgress?.Report(SendStage.Connecting);
         using TcpClient client = new(endpoint.AddressFamily);
         await client.ConnectAsync(endpoint.Address, endpoint.Port, cancellationToken).ConfigureAwait(false);
         await using NetworkStream stream = client.GetStream();
@@ -58,12 +60,14 @@ public sealed class TcpFileSender(DeviceInfo localDevice)
             totalBytes = size
         }, cancellationToken).ConfigureAwait(false);
 
+        stageProgress?.Report(SendStage.WaitingForAcceptance);
         using (var accept = await ProtocolMessage.ReadExpectedAsync(stream, "ACCEPT", cancellationToken)
             .ConfigureAwait(false))
         {
             ProtocolMessage.RequireTransfer(accept.RootElement, transferId);
         }
 
+        stageProgress?.Report(SendStage.PreparingFile);
         string hash = await ComputeSha256Async(source.FullName, cancellationToken).ConfigureAwait(false);
 
         await WriteAsync(stream, new
@@ -77,9 +81,11 @@ public sealed class TcpFileSender(DeviceInfo localDevice)
             sha256 = hash
         }, cancellationToken).ConfigureAwait(false);
 
+        stageProgress?.Report(SendStage.Transferring);
         await StreamFileAsync(stream, source.FullName, fileId, size, progress, cancellationToken)
             .ConfigureAwait(false);
 
+        stageProgress?.Report(SendStage.Completing);
         await WriteAsync(stream, new
         {
             type = "FILE_END",

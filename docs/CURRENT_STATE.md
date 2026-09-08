@@ -2,11 +2,11 @@ Drop — Current State
 
 Project status
 
-Project bootstrap, the Windows transfer core, and reusable Windows LAN discovery are complete.
+Project bootstrap, the Windows transfer core, reusable Windows LAN discovery, and the minimal Windows sender UI are complete.
 
 Current milestone
 
-Day 2 Task 1 — reusable Windows LAN mDNS advertisement and discovery (completed).
+Day 2 Task 2 — minimal Windows nearby-device UI and single-file sending (completed).
 
 Completed
 
@@ -43,6 +43,19 @@ Completed
 -   deterministic discovery tests cover TXT/SRV/address parsing, validation, deduplication, ignore-self behavior, updates, source removal, TTL expiry, event flow, restart, cancellation, and disposal
 -   2026-09-09 full Windows Release build: succeeded with 0 warnings and 0 errors
 -   2026-09-09 all automated tests: 29 passed, 0 failed, 0 skipped
+-   native WPF application added under `apps/windows/src/Drop.Windows.App` without introducing another UI framework or package
+-   Windows app creates and persists a stable local device ID under local application data
+-   app startup automatically starts the existing LAN discovery service and advertises a real TCP receiver endpoint
+-   nearby-device list shows discovered device name, platform, and available state and updates for appeared, changed, and disappeared devices
+-   selected devices that disappear are removed safely and sending is disabled when no available device is selected
+-   standard Windows file picker starts a single-file send through `TcpFileSender` using the endpoint supplied by discovery
+-   protocol sender now exposes optional stage progress for connecting, waiting for acceptance, preparing, transferring, and completing without coupling it to UI types
+-   Windows UI shows connecting, waiting/accepted, transferring, completing, completed, failed, and cancelled states plus 64-bit byte progress
+-   concurrent sends from one UI instance are prevented; the active transfer can be cancelled
+-   a minimal headless receiver host accepts the existing automatically accepted Protocol v1 flow and saves verified files to `Downloads\Drop`; no receiving UI was added
+-   transfer presentation-state tests cover normal stage/progress flow, conflicting-send prevention, cancellation, and failure
+-   2026-09-09 full Windows Release build: succeeded with 0 warnings and 0 errors
+-   2026-09-09 all automated tests: 32 passed, 0 failed, 0 skipped
 
 In progress
 
@@ -52,8 +65,10 @@ Not started
 
 Windows
 
--   Windows UI
+-   incoming transfer accept/decline UI
 -   trusted devices
+-   tray/background behavior
+-   packaging
 
 iOS
 
@@ -78,9 +93,10 @@ Direct peer-to-peer
 
 Exact next task
 
-Day 2 Task 2 — create the minimal Windows application UI and nearby-device list
-by consuming `IDropDiscoveryService`, without adding trust, tray behavior, or
-notifications yet.
+Day 2 Task 3 — replace the Windows app's temporary headless auto-accept behavior
+with a minimal incoming-transfer offer UI that shows the sender and file metadata,
+allows accept or decline, and keeps verified destination handling in `Downloads\Drop`.
+Do not add trust, tray behavior, notifications, or settings yet.
 
 Known issues
 
@@ -94,6 +110,11 @@ Known issues
 -   disappearance after an ungraceful peer exit depends on DNS TTL expiry and can be reported up to one 15-second sweep interval after expiry
 -   discovery metadata and device IDs are unauthenticated presence information and must not be treated as a trust or security identity
 -   deterministic same-host mDNS integration is not in the normal test suite because multicast loopback, interface selection, firewall policy, and timing vary by machine; real two-device Windows LAN verification remains required
+-   the Windows UI currently sends exactly one file per picker action because the transfer core supports one file per session
+-   incoming transfers are temporarily auto-accepted by the Windows app and saved to `Downloads\Drop`; accept/decline UI is the exact next task
+-   incoming transfer progress and errors are not displayed yet
+-   cancellation closes the active sender connection; Protocol v1 does not send an in-band CANCEL while raw payload bytes are in flight
+-   the Windows app is an unpackaged framework-dependent WPF executable; installer/package work remains for Day 7
 
 Important constraints
 
@@ -110,4 +131,4 @@ Important constraints
 
 Last updated
 
-2026-09-09 — Day 2 Task 1 reusable Windows LAN mDNS advertisement and discovery completed.
+2026-09-09 — Day 2 Task 2 minimal Windows discovery and sender UI completed.
