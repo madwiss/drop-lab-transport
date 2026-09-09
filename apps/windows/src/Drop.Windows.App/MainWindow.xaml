@@ -32,8 +32,8 @@
                             <ColumnDefinition Width="Auto" />
                         </Grid.ColumnDefinitions>
                         <StackPanel>
-                            <TextBlock FontSize="16" FontWeight="SemiBold" Text="{Binding DeviceName}" />
-                            <TextBlock Margin="0,3,0,0" Foreground="DimGray" Text="{Binding Platform}" />
+                            <TextBlock FontSize="16" FontWeight="SemiBold" Text="{Binding DeviceName, Mode=OneWay}" />
+                            <TextBlock Margin="0,3,0,0" Foreground="DimGray" Text="{Binding Platform, Mode=OneWay}" />
                         </StackPanel>
                         <TextBlock Grid.Column="1" VerticalAlignment="Center" Foreground="ForestGreen"
                                    Text="Available" />
@@ -43,7 +43,7 @@
         </ListBox>
 
         <Border Grid.Row="3" Margin="0,16,0,0" Padding="14" Background="#FFFFF4D6" CornerRadius="6"
-                Visibility="{Binding Incoming.IsVisible, Converter={StaticResource BooleanToVisibilityConverter}}">
+                Visibility="{Binding Incoming.IsVisible, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}">
             <Grid>
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="*" />
@@ -51,22 +51,22 @@
                     <ColumnDefinition Width="Auto" />
                 </Grid.ColumnDefinitions>
                 <StackPanel Margin="0,0,16,0">
-                    <TextBlock FontSize="16" FontWeight="SemiBold" Text="{Binding Incoming.StatusText}" />
+                    <TextBlock FontSize="16" FontWeight="SemiBold" Text="{Binding Incoming.StatusText, Mode=OneWay}" />
                     <TextBlock Margin="0,4,0,0">
-                        <Run Text="From " /><Run FontWeight="SemiBold" Text="{Binding Incoming.SenderName}" />
+                        <Run Text="From " /><Run FontWeight="SemiBold" Text="{Binding Incoming.SenderName, Mode=OneWay}" />
                     </TextBlock>
-                    <TextBlock Margin="0,3,0,0" FontWeight="SemiBold" Text="{Binding Incoming.FileName}" />
+                    <TextBlock Margin="0,3,0,0" FontWeight="SemiBold" Text="{Binding Incoming.FileName, Mode=OneWay}" />
                     <ProgressBar Margin="0,9,0,0" Height="8" Minimum="0" Maximum="100"
-                                 Value="{Binding Incoming.ProgressPercent}" />
+                                 Value="{Binding Incoming.ProgressPercent, Mode=OneWay}" />
                     <TextBlock Margin="0,4,0,0" FontSize="12" Foreground="DimGray"
-                               Text="{Binding Incoming.ProgressText}" />
+                               Text="{Binding Incoming.ProgressText, Mode=OneWay}" />
                 </StackPanel>
                 <Button Grid.Column="1" Margin="0,0,8,0" Padding="16,8" Content="Decline"
-                        Click="DeclineIncomingButton_Click" IsEnabled="{Binding Incoming.CanDecide}"
-                        Visibility="{Binding Incoming.CanDecide, Converter={StaticResource BooleanToVisibilityConverter}}" />
+                        Click="DeclineIncomingButton_Click" IsEnabled="{Binding Incoming.CanDecide, Mode=OneWay}"
+                        Visibility="{Binding Incoming.CanDecide, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}" />
                 <Button Grid.Column="2" Padding="18,8" Content="Accept"
-                        Click="AcceptIncomingButton_Click" IsEnabled="{Binding Incoming.CanDecide}"
-                        Visibility="{Binding Incoming.CanDecide, Converter={StaticResource BooleanToVisibilityConverter}}" />
+                        Click="AcceptIncomingButton_Click" IsEnabled="{Binding Incoming.CanDecide, Mode=OneWay}"
+                        Visibility="{Binding Incoming.CanDecide, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}" />
             </Grid>
         </Border>
 
@@ -78,12 +78,12 @@
                     <ColumnDefinition Width="Auto" />
                 </Grid.ColumnDefinitions>
                 <StackPanel Margin="0,0,16,0">
-                    <TextBlock FontWeight="SemiBold" Text="{Binding Transfer.FileName}" />
-                    <TextBlock Margin="0,3,0,0" Text="{Binding Transfer.StatusText}" />
+                    <TextBlock FontWeight="SemiBold" Text="{Binding Transfer.FileName, Mode=OneWay}" />
+                    <TextBlock Margin="0,3,0,0" Text="{Binding Transfer.StatusText, Mode=OneWay}" />
                     <ProgressBar Margin="0,9,0,0" Height="8" Minimum="0" Maximum="100"
-                                 Value="{Binding Transfer.ProgressPercent}" />
+                                 Value="{Binding Transfer.ProgressPercent, Mode=OneWay}" />
                     <TextBlock Margin="0,4,0,0" FontSize="12" Foreground="DimGray"
-                               Text="{Binding Transfer.ProgressText}" />
+                               Text="{Binding Transfer.ProgressText, Mode=OneWay}" />
                 </StackPanel>
                 <Button x:Name="CancelButton" Grid.Column="1" Margin="0,0,8,0" Padding="16,8"
                         Content="Cancel" Click="CancelButton_Click" IsEnabled="False" />
