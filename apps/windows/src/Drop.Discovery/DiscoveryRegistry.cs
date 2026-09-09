@@ -1,5 +1,4 @@
 using System.Net;
-using System.Net.Sockets;
 
 namespace Drop.Discovery;
 
@@ -23,10 +22,25 @@ internal enum DiscoveryChangeKind
 
 internal sealed record DiscoveryChange(DiscoveryChangeKind Kind, DiscoveredDevice Device);
 
-internal sealed class DiscoveryRegistry(Guid localDeviceId)
+internal sealed class DiscoveryRegistry
 {
     private readonly object _gate = new();
     private readonly Dictionary<string, DnsSdRecord> _sources = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Guid _localDeviceId;
+    private readonly IReadOnlyCollection<LocalUnicastAddress> _localAddresses;
+
+    public DiscoveryRegistry(Guid localDeviceId)
+        : this(localDeviceId, DiscoveryAddressSelector.GetLocalAddresses())
+    {
+    }
+
+    internal DiscoveryRegistry(
+        Guid localDeviceId,
+        IReadOnlyCollection<LocalUnicastAddress> localAddresses)
+    {
+        _localDeviceId = localDeviceId;
+        _localAddresses = localAddresses;
+    }
 
     public IReadOnlyCollection<DiscoveredDevice> Devices
     {
@@ -42,7 +56,7 @@ internal sealed class DiscoveryRegistry(Guid localDeviceId)
     public IReadOnlyList<DiscoveryChange> Upsert(DnsSdRecord record)
     {
         ArgumentNullException.ThrowIfNull(record);
-        if (record.DeviceId == localDeviceId || !IsUsable(record)) return [];
+        if (record.DeviceId == _localDeviceId || !IsUsable(record)) return [];
 
         lock (_gate)
         {
@@ -113,22 +127,10 @@ internal sealed class DiscoveryRegistry(Guid localDeviceId)
             .FirstOrDefault();
         if (source is null) return null;
 
-        var address = source.Addresses
-            .Distinct()
-            .OrderBy(AddressRank)
-            .ThenBy(value => value.ToString(), StringComparer.Ordinal)
-            .First();
+        var address = DiscoveryAddressSelector.Select(source.Addresses, _localAddresses);
         return new(source.DeviceId, source.DeviceName, source.Platform, source.ProtocolVersion,
             source.AppVersion, address, source.Port);
     }
-
-    private static int AddressRank(IPAddress address) => address.AddressFamily switch
-    {
-        AddressFamily.InterNetwork when !IPAddress.IsLoopback(address) => 0,
-        AddressFamily.InterNetworkV6 when !IPAddress.IsLoopback(address) => 1,
-        AddressFamily.InterNetwork => 2,
-        _ => 3
-    };
 
     private static bool IsUsable(DnsSdRecord record) =>
         record.DeviceId != Guid.Empty &&

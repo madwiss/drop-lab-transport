@@ -24,6 +24,7 @@ public sealed class TransferStateModel : INotifyPropertyChanged
     private string _fileName = string.Empty;
     private long _bytesTransferred;
     private long _totalBytes;
+    private string? _remoteEndpoint;
 
     public event PropertyChangedEventHandler? PropertyChanged;
 
@@ -42,7 +43,7 @@ public sealed class TransferStateModel : INotifyPropertyChanged
         ? $"{FormatBytes(_bytesTransferred)} / {FormatBytes(_totalBytes)}"
         : string.Empty;
 
-    public void Begin(string fileName, long totalBytes)
+    public void Begin(string fileName, long totalBytes, string? remoteEndpoint = null)
     {
         if (IsBusy) throw new InvalidOperationException("A transfer is already active.");
         ArgumentException.ThrowIfNullOrWhiteSpace(fileName);
@@ -51,7 +52,8 @@ public sealed class TransferStateModel : INotifyPropertyChanged
         _fileName = fileName;
         _bytesTransferred = 0;
         _totalBytes = totalBytes;
-        SetState(TransferState.Connecting, "Connecting…");
+        _remoteEndpoint = remoteEndpoint;
+        SetState(TransferState.Connecting, ConnectingStatus());
         NotifyProgress();
         OnPropertyChanged(nameof(FileName));
     }
@@ -60,7 +62,7 @@ public sealed class TransferStateModel : INotifyPropertyChanged
     {
         _ = stage switch
         {
-            SendStage.Connecting => SetState(TransferState.Connecting, "Connecting…"),
+            SendStage.Connecting => SetState(TransferState.Connecting, ConnectingStatus()),
             SendStage.WaitingForAcceptance => SetState(TransferState.WaitingForAcceptance, "Waiting for acceptance…"),
             SendStage.PreparingFile => SetState(TransferState.PreparingFile, "Accepted — preparing file…"),
             SendStage.Transferring => SetState(TransferState.Transferring, "Transferring…"),
@@ -87,6 +89,10 @@ public sealed class TransferStateModel : INotifyPropertyChanged
         SetState(TransferState.Failed, $"Failed: {message}");
 
     public void Cancel() => SetState(TransferState.Cancelled, "Cancelled");
+
+    private string ConnectingStatus() => string.IsNullOrWhiteSpace(_remoteEndpoint)
+        ? "Connecting…"
+        : $"Connecting to {_remoteEndpoint}…";
 
     private TransferState SetState(TransferState state, string status)
     {

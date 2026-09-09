@@ -31,6 +31,17 @@ public sealed class TransferStateModelTests
     }
 
     [TestMethod]
+    public void ConnectingStatusShowsTheSelectedRemoteEndpoint()
+    {
+        TransferStateModel model = new();
+
+        model.Begin("photo.jpg", 2048, "192.168.0.139:61138");
+        model.ReportStage(SendStage.Connecting);
+
+        StringAssert.Contains(model.StatusText, "192.168.0.139:61138");
+    }
+
+    [TestMethod]
     public void ActiveTransferPreventsAConflictingSend()
     {
         TransferStateModel model = new();

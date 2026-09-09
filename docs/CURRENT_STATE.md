@@ -65,6 +65,12 @@ Completed
 -   protocol integration tests cover accept/integrity and decline/no-file behavior; presentation tests cover accept, decline, receiving progress, and terminal state transitions
 -   2026-09-09 full Windows Release build: succeeded with 0 warnings and 0 errors
 -   2026-09-09 all automated tests: 35 passed, 0 failed, 0 skipped
+-   real two-PC Windows testing transferred 1.47 GB successfully in one direction but exposed asymmetric connection failures when the receiving PC advertised both its physical `192.168.0.139` LAN address and an unreachable `172.27.112.1` virtual-adapter address
+-   discovery endpoint selection now prefers a non-loopback IPv4 address on one of the sender's directly connected subnets, then another private IPv4 address, then another IPv4 address, while retaining IPv6 as a fallback
+-   Windows send status and trace diagnostics show the exact selected remote IP address and port during connection attempts
+-   regression tests cover selecting `192.168.0.139` over `172.27.112.1` for a sender on `192.168.0.0/24` and retaining private-IPv4/IPv6 fallback behavior
+-   2026-09-09 full Windows Release build: succeeded with 0 errors; package-vulnerability audit emitted 5 warnings because the NuGet service index was unavailable
+-   2026-09-09 all automated tests after the endpoint fix: 40 passed, 0 failed, 0 skipped
 
 In progress
 
@@ -111,7 +117,7 @@ Known issues
 -   trusted-device storage and opt-in trusted-device auto-accept are not implemented; every incoming offer requires an explicit decision
 -   session inactivity/connect timeouts are not implemented yet
 -   Protocol v1 currently uses plain TCP and does not authenticate or encrypt peers
--   the streaming path is 64-bit safe, but a physical multi-gigabyte transfer has not yet been run
+-   the streaming path is 64-bit safe; a 1.47 GB physical Windows-to-Windows transfer has completed successfully, while larger multi-gigabyte testing remains outstanding
 -   mDNS discovery is limited to the local multicast-capable network; Windows Firewall rules, VPN routing, access-point client isolation, or networks that suppress multicast can prevent peers from appearing
 -   advertised addresses are captured when discovery starts; after a material network-interface/address change, restart discovery to refresh the advertisement
 -   disappearance after an ungraceful peer exit depends on DNS TTL expiry and can be reported up to one 15-second sweep interval after expiry
@@ -138,4 +144,4 @@ Important constraints
 
 Last updated
 
-2026-09-09 — Day 2 Task 3 minimal Windows incoming offer accept/decline UI completed.
+2026-09-09 — fixed real-device Windows endpoint selection for multi-adapter peers and added selected-endpoint diagnostics.

@@ -25,6 +25,48 @@ public sealed class DiscoveryRegistryTests
     }
 
     [TestMethod]
+    public void Upsert_PrefersIpv4AddressOnTheSendersLanOverVirtualPrivateAddress()
+    {
+        var peerId = Guid.NewGuid();
+        LocalUnicastAddress[] localAddresses =
+        [
+            new(IPAddress.Parse("192.168.0.44"), 24)
+        ];
+        var registry = new DiscoveryRegistry(Guid.NewGuid(), localAddresses);
+
+        var changes = registry.Upsert(Record(
+            "peer", peerId, "Peer B", "172.27.112.1", "192.168.0.139", port: 61138));
+
+        var device = changes.Single().Device;
+        Assert.AreEqual(IPAddress.Parse("192.168.0.139"), device.Address);
+        Assert.AreEqual(61138, device.Port);
+    }
+
+    [TestMethod]
+    public void Upsert_FallsBackToPrivateIpv4ThenIpv6WhenNoLocalSubnetMatches()
+    {
+        LocalUnicastAddress[] localAddresses =
+        [
+            new(IPAddress.Parse("192.168.0.44"), 24)
+        ];
+        var registry = new DiscoveryRegistry(Guid.NewGuid(), localAddresses);
+
+        registry.Upsert(Record("peer", Guid.NewGuid(), "Peer", "2001:db8::20", "172.27.112.1"));
+
+        Assert.AreEqual(IPAddress.Parse("172.27.112.1"), registry.Devices.Single().Address);
+    }
+
+    [TestMethod]
+    public void Upsert_RetainsIpv6WhenItIsTheOnlyAvailableAddress()
+    {
+        var registry = new DiscoveryRegistry(Guid.NewGuid(), []);
+
+        registry.Upsert(Record("peer", Guid.NewGuid(), "Peer", "2001:db8::20"));
+
+        Assert.AreEqual(IPAddress.Parse("2001:db8::20"), registry.Devices.Single().Address);
+    }
+
+    [TestMethod]
     public void Upsert_IgnoresLocalDeviceId()
     {
         var localId = Guid.NewGuid();

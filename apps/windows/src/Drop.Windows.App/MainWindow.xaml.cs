@@ -1,5 +1,6 @@
 using System.Collections.ObjectModel;
 using System.ComponentModel;
+using System.Diagnostics;
 using System.IO;
 using System.Net;
 using System.Windows;
@@ -71,8 +72,10 @@ public partial class MainWindow : Window
         if (picker.ShowDialog(this) != true) return;
 
         FileInfo file = new(picker.FileName);
+        IPEndPoint endpoint = new(device.Address, device.Port);
         _sendCancellation = CancellationTokenSource.CreateLinkedTokenSource(_lifetime.Token);
-        _transfer.Begin(file.Name, file.Length);
+        _transfer.Begin(file.Name, file.Length, endpoint.ToString());
+        Trace.WriteLine($"Drop send selected endpoint {endpoint} for device {device.DeviceId:D} ({device.DeviceName}).");
         UpdateActions();
 
         try
@@ -81,7 +84,7 @@ public partial class MainWindow : Window
             Progress<SendStage> stages = new(_transfer.ReportStage);
             TcpFileSender senderCore = new(_localDevice);
             await senderCore.SendAsync(
-                new IPEndPoint(device.Address, device.Port), file.FullName, file.Name,
+                endpoint, file.FullName, file.Name,
                 progress, _sendCancellation.Token, stages);
             _transfer.Complete();
         }
