@@ -16,6 +16,7 @@ public partial class MainWindow : Window
     private readonly ObservableCollection<DiscoveredDevice> _devices = [];
     private readonly LanDiscoveryService _discovery = new();
     private readonly TransferStateModel _transfer = new();
+    private readonly IncomingTransferStateModel _incoming = new();
     private readonly CancellationTokenSource _lifetime = new();
     private ReceiverHost? _receiver;
     private DeviceInfo? _localDevice;
@@ -24,7 +25,7 @@ public partial class MainWindow : Window
     public MainWindow()
     {
         InitializeComponent();
-        DataContext = new { Transfer = _transfer };
+        DataContext = new { Transfer = _transfer, Incoming = _incoming };
         DeviceList.ItemsSource = _devices;
         _transfer.PropertyChanged += Transfer_PropertyChanged;
         _discovery.DeviceAppeared += Discovery_DeviceAppeared;
@@ -41,7 +42,10 @@ public partial class MainWindow : Window
         {
             Guid deviceId = LocalDeviceIdentity.LoadOrCreate();
             _localDevice = new DeviceInfo(deviceId, Environment.MachineName, "windows", AppVersion);
-            _receiver = new ReceiverHost(_localDevice);
+            Progress<FileTransferProgress> receiveProgress = new(_incoming.ReportProgress);
+            _receiver = new ReceiverHost(_localDevice, DecideIncomingAsync, receiveProgress);
+            _receiver.SessionEnded += Receiver_SessionEnded;
+            _receiver.SessionFailed += Receiver_SessionFailed;
             int port = _receiver.Start();
             await _discovery.StartAsync(new DropAdvertisement(
                 deviceId, _localDevice.Name, _localDevice.Platform, 1, AppVersion, port), _lifetime.Token);
@@ -98,6 +102,32 @@ public partial class MainWindow : Window
     }
 
     private void CancelButton_Click(object sender, RoutedEventArgs e) => _sendCancellation?.Cancel();
+
+    private void AcceptIncomingButton_Click(object sender, RoutedEventArgs e) => _incoming.Accept();
+
+    private void DeclineIncomingButton_Click(object sender, RoutedEventArgs e) => _incoming.Decline();
+
+    private async ValueTask<IncomingTransferDecision> DecideIncomingAsync(
+        IncomingTransferOffer offer,
+        CancellationToken cancellationToken)
+    {
+        Task<IncomingTransferDecision> decision = await Dispatcher.InvokeAsync(
+            () => _incoming.PresentAsync(offer, cancellationToken));
+        return await decision.ConfigureAwait(false);
+    }
+
+    private void Receiver_SessionEnded(object? sender, ReceiveSessionResult result) =>
+        Dispatcher.InvokeAsync(() =>
+        {
+            if (result.Success) _incoming.Complete();
+            else if (result.ErrorCode != "DECLINED") _incoming.Fail(result.ErrorCode ?? "Transfer failed");
+        });
+
+    private void Receiver_SessionFailed(object? sender, Exception exception) =>
+        Dispatcher.InvokeAsync(() =>
+        {
+            if (!_lifetime.IsCancellationRequested) _incoming.Fail(exception.Message);
+        });
 
     private void DeviceList_SelectionChanged(object sender, SelectionChangedEventArgs e) => UpdateActions();
 
@@ -156,6 +186,11 @@ public partial class MainWindow : Window
         _discovery.DeviceAppeared -= Discovery_DeviceAppeared;
         _discovery.DeviceUpdated -= Discovery_DeviceUpdated;
         _discovery.DeviceDisappeared -= Discovery_DeviceDisappeared;
+        if (_receiver is not null)
+        {
+            _receiver.SessionEnded -= Receiver_SessionEnded;
+            _receiver.SessionFailed -= Receiver_SessionFailed;
+        }
         await _discovery.DisposeAsync();
         if (_receiver is not null) await _receiver.DisposeAsync();
         _lifetime.Dispose();

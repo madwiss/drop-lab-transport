@@ -6,7 +6,7 @@ using System.Text.Json;
 namespace Drop.Protocol;
 
 /// <summary>
-/// Receives one automatically accepted Protocol v1 file-transfer session over an established TCP connection.
+/// Receives one Protocol v1 file-transfer session over an established TCP connection.
 /// </summary>
 public sealed class TcpFileReceiver(DeviceInfo localDevice)
 {
@@ -15,11 +15,13 @@ public sealed class TcpFileReceiver(DeviceInfo localDevice)
     public async Task<ReceiveSessionResult> ReceiveAsync(
         TcpClient client,
         string destinationDirectory,
+        Func<IncomingTransferOffer, CancellationToken, ValueTask<IncomingTransferDecision>> decide,
         IProgress<FileTransferProgress>? progress = null,
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(client);
         ArgumentException.ThrowIfNullOrWhiteSpace(destinationDirectory);
+        ArgumentNullException.ThrowIfNull(decide);
 
         string directory = Path.GetFullPath(destinationDirectory);
         Directory.CreateDirectory(directory);
@@ -30,10 +32,11 @@ public sealed class TcpFileReceiver(DeviceInfo localDevice)
         {
             try
             {
+                DeviceInfo sender;
                 using (JsonDocument hello = await ProtocolMessage.ReadExpectedAsync(
                     stream, "HELLO", cancellationToken).ConfigureAwait(false))
                 {
-                    ValidateDevice(hello.RootElement);
+                    sender = ReadDevice(hello.RootElement);
                 }
 
                 await WriteAsync(stream, new
@@ -55,6 +58,22 @@ public sealed class TcpFileReceiver(DeviceInfo localDevice)
                     {
                         throw new InvalidDataException("OFFER totalBytes does not match the offered file.");
                     }
+                }
+
+                IncomingTransferOffer incomingOffer = new(
+                    transferId, sender, offered.FileId, offered.Name, offered.Size);
+                IncomingTransferDecision decision = await decide(incomingOffer, cancellationToken)
+                    .ConfigureAwait(false);
+                if (decision == IncomingTransferDecision.Decline)
+                {
+                    await WriteAsync(stream, new
+                    {
+                        type = "DECLINE",
+                        protocolVersion = ProtocolMessage.Version,
+                        transferId,
+                        reason = "user_declined"
+                    }, cancellationToken).ConfigureAwait(false);
+                    return new ReceiveSessionResult(transferId, false, [], "DECLINED");
                 }
 
                 await WriteAsync(stream, new
@@ -235,7 +254,7 @@ public sealed class TcpFileReceiver(DeviceInfo localDevice)
             ProtocolMessage.RequiredSize(file));
     }
 
-    private static void ValidateDevice(JsonElement message)
+    private static DeviceInfo ReadDevice(JsonElement message)
     {
         if (!message.TryGetProperty("device", out JsonElement device) ||
             device.ValueKind != JsonValueKind.Object)
@@ -243,15 +262,17 @@ public sealed class TcpFileReceiver(DeviceInfo localDevice)
             throw new InvalidDataException("HELLO is missing device metadata.");
         }
 
-        _ = ProtocolMessage.RequiredGuid(device, "deviceId");
-        _ = ProtocolMessage.RequiredString(device, "name");
-        _ = ProtocolMessage.RequiredString(device, "platform");
-        _ = ProtocolMessage.RequiredString(device, "appVersion");
+        Guid deviceId = ProtocolMessage.RequiredGuid(device, "deviceId");
+        string name = ProtocolMessage.RequiredString(device, "name");
+        string platform = ProtocolMessage.RequiredString(device, "platform");
+        string appVersion = ProtocolMessage.RequiredString(device, "appVersion");
         if (!device.TryGetProperty("protocolVersion", out JsonElement version) ||
             !version.TryGetInt32(out int value) || value != ProtocolMessage.Version)
         {
             throw new InvalidDataException("HELLO device metadata has an unsupported protocol version.");
         }
+
+        return new DeviceInfo(deviceId, name, platform, appVersion);
     }
 
     private static bool IsLowercaseSha256(string value) =>

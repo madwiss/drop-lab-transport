@@ -157,6 +157,32 @@ public sealed class TcpFileTransferTests
         Assert.IsEmpty(Directory.GetFiles(test.Destination));
     }
 
+    [TestMethod]
+    public async Task DeclinedOfferSendsDeclineAndCreatesNoFileAsync()
+    {
+        using TestDirectory test = new();
+        IncomingTransferOffer? presentedOffer = null;
+        await using ManualSession session = await ManualSession.StartAsync(
+            test.Destination,
+            decide: (offer, _) =>
+            {
+                presentedOffer = offer;
+                return ValueTask.FromResult(IncomingTransferDecision.Decline);
+            });
+
+        using JsonDocument response = await session.HandshakeAndOfferAsync("declined.bin", 123);
+        ReceiveSessionResult result = await session.ReceiverTask;
+
+        Assert.AreEqual("DECLINE", response.RootElement.GetProperty("type").GetString());
+        Assert.AreEqual("user_declined", response.RootElement.GetProperty("reason").GetString());
+        Assert.AreEqual("Sender", presentedOffer?.Sender.Name);
+        Assert.AreEqual("declined.bin", presentedOffer?.FileName);
+        Assert.AreEqual(123L, presentedOffer?.FileSize);
+        Assert.IsFalse(result.Success);
+        Assert.AreEqual("DECLINED", result.ErrorCode);
+        Assert.IsEmpty(Directory.GetFiles(test.Destination));
+    }
+
     private static async Task<TransferPair> TransferAsync(
         string source,
         string destination,
@@ -171,7 +197,7 @@ public sealed class TcpFileTransferTests
             Task<ReceiveSessionResult> receiveTask = Task.Run(async () =>
             {
                 TcpClient accepted = await listener.AcceptTcpClientAsync();
-                return await receiver.ReceiveAsync(accepted, destination);
+                return await receiver.ReceiveAsync(accepted, destination, AcceptOffer);
             });
 
             TcpFileSender sender = new(SenderDevice);
@@ -258,7 +284,8 @@ public sealed class TcpFileTransferTests
 
         public static async Task<ManualSession> StartAsync(
             string destination,
-            CancellationToken receiverCancellation = default)
+            CancellationToken receiverCancellation = default,
+            Func<IncomingTransferOffer, CancellationToken, ValueTask<IncomingTransferDecision>>? decide = null)
         {
             TcpListener listener = new(IPAddress.Loopback, 0);
             listener.Start();
@@ -268,11 +295,29 @@ public sealed class TcpFileTransferTests
             TcpClient accepted = await acceptTask;
             TcpFileReceiver receiver = new(ReceiverDevice);
             Task<ReceiveSessionResult> receiverTask = receiver.ReceiveAsync(
-                accepted, destination, progress: null, cancellationToken: receiverCancellation);
+                accepted, destination, decide ?? AcceptOffer, progress: null,
+                cancellationToken: receiverCancellation);
             return new ManualSession(listener, client, client.GetStream(), receiverTask);
         }
 
         public async Task HandshakeAndStartFileAsync(string name, long size, string sha256)
+        {
+            using JsonDocument accept = await HandshakeAndOfferAsync(name, size);
+            Assert.AreEqual("ACCEPT", accept.RootElement.GetProperty("type").GetString());
+
+            await WriteAsync(new
+            {
+                type = "FILE_START",
+                protocolVersion = 1,
+                transferId = TransferId,
+                fileId = FileId,
+                name,
+                size,
+                sha256
+            });
+        }
+
+        public async Task<JsonDocument> HandshakeAndOfferAsync(string name, long size)
         {
             await WriteAsync(new
             {
@@ -298,19 +343,7 @@ public sealed class TcpFileTransferTests
                 files = new[] { new { fileId = FileId, name, size } },
                 totalBytes = size
             });
-            using JsonDocument accept = await ControlFrameCodec.ReadAsync(Stream);
-            Assert.AreEqual("ACCEPT", accept.RootElement.GetProperty("type").GetString());
-
-            await WriteAsync(new
-            {
-                type = "FILE_START",
-                protocolVersion = 1,
-                transferId = TransferId,
-                fileId = FileId,
-                name,
-                size,
-                sha256
-            });
+            return await ControlFrameCodec.ReadAsync(Stream);
         }
 
         public Task WriteFileEndAsync() => WriteAsync(new
@@ -331,4 +364,9 @@ public sealed class TcpFileTransferTests
         private async Task WriteAsync(object message) =>
             await ControlFrameCodec.WriteAsync(Stream, JsonSerializer.SerializeToElement(message));
     }
+
+    private static ValueTask<IncomingTransferDecision> AcceptOffer(
+        IncomingTransferOffer offer,
+        CancellationToken cancellationToken) =>
+        ValueTask.FromResult(IncomingTransferDecision.Accept);
 }

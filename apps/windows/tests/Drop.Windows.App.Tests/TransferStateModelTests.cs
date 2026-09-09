@@ -55,3 +55,45 @@ public sealed class TransferStateModelTests
         Assert.IsFalse(model.IsBusy);
     }
 }
+
+[TestClass]
+public sealed class IncomingTransferStateModelTests
+{
+    private static readonly DeviceInfo Sender = new(Guid.NewGuid(), "Sender PC", "windows", "0.1.0");
+
+    [TestMethod]
+    public async Task AcceptMovesOfferToReceivingAndTracksProgress()
+    {
+        IncomingTransferStateModel model = new();
+        IncomingTransferOffer offer = new(Guid.NewGuid(), Sender, Guid.NewGuid(), "photo.jpg", 2048);
+
+        Task<IncomingTransferDecision> decision = model.PresentAsync(offer, CancellationToken.None);
+        Assert.AreEqual(IncomingTransferState.IncomingOffer, model.State);
+        Assert.AreEqual("Sender PC", model.SenderName);
+        Assert.AreEqual("photo.jpg", model.FileName);
+        Assert.IsTrue(model.CanDecide);
+
+        model.Accept();
+        Assert.AreEqual(IncomingTransferDecision.Accept, await decision);
+        Assert.AreEqual(IncomingTransferState.Receiving, model.State);
+
+        model.ReportProgress(new FileTransferProgress(offer.FileId, 1024, 2048));
+        Assert.AreEqual(50d, model.ProgressPercent);
+        model.Complete();
+        Assert.AreEqual(IncomingTransferState.Completed, model.State);
+    }
+
+    [TestMethod]
+    public async Task DeclineMovesOfferToDeclined()
+    {
+        IncomingTransferStateModel model = new();
+        IncomingTransferOffer offer = new(Guid.NewGuid(), Sender, Guid.NewGuid(), "nope.bin", 42);
+
+        Task<IncomingTransferDecision> decision = model.PresentAsync(offer, CancellationToken.None);
+        model.Decline();
+
+        Assert.AreEqual(IncomingTransferDecision.Decline, await decision);
+        Assert.AreEqual(IncomingTransferState.Declined, model.State);
+        Assert.IsFalse(model.CanDecide);
+    }
+}

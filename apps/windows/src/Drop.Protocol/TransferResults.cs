@@ -2,6 +2,19 @@ namespace Drop.Protocol;
 
 public sealed record FileTransferProgress(Guid FileId, long BytesTransferred, long TotalBytes);
 
+public enum IncomingTransferDecision
+{
+    Accept,
+    Decline
+}
+
+public sealed record IncomingTransferOffer(
+    Guid TransferId,
+    DeviceInfo Sender,
+    Guid FileId,
+    string FileName,
+    long FileSize);
+
 public enum SendStage
 {
     Connecting,
