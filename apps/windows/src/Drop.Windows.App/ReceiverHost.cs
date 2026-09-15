@@ -1,8 +1,8 @@
 using System.Net;
+using System.Net.Sockets;
 using System.IO;
 using System.Collections.Concurrent;
 using Drop.Protocol;
-using Drop.Transport;
 
 namespace Drop.Windows;
 
@@ -14,7 +14,7 @@ internal sealed class ReceiverHost(
     private readonly CancellationTokenSource _cancellation = new();
     private readonly ConcurrentDictionary<int, Task> _sessions = new();
     private readonly SemaphoreSlim _sessionGate = new(1, 1);
-    private TcpTransportListener? _listener;
+    private TcpListener? _listener;
     private Task? _acceptLoop;
     private int _nextSessionId;
 
@@ -23,16 +23,17 @@ internal sealed class ReceiverHost(
 
     public int Start()
     {
-        _listener = new TcpTransportListener(IPAddress.IPv6Any, 0, dualMode: true);
+        _listener = new TcpListener(IPAddress.IPv6Any, 0);
+        _listener.Server.DualMode = true;
         _listener.Start();
         _acceptLoop = AcceptLoopAsync(_listener, _cancellation.Token);
-        return _listener.LocalEndpoint.Port;
+        return ((IPEndPoint)_listener.LocalEndpoint).Port;
     }
 
     public async ValueTask DisposeAsync()
     {
         _cancellation.Cancel();
-        if (_listener is not null) await _listener.DisposeAsync();
+        _listener?.Stop();
         if (_acceptLoop is not null)
         {
             try { await _acceptLoop.ConfigureAwait(false); }
@@ -43,22 +44,22 @@ internal sealed class ReceiverHost(
         _cancellation.Dispose();
     }
 
-    private async Task AcceptLoopAsync(TcpTransportListener listener, CancellationToken cancellationToken)
+    private async Task AcceptLoopAsync(TcpListener listener, CancellationToken cancellationToken)
     {
         while (!cancellationToken.IsCancellationRequested)
         {
-            IReliableByteStream connection;
+            TcpClient client;
             try
             {
-                connection = await listener.AcceptAsync(cancellationToken).ConfigureAwait(false);
+                client = await listener.AcceptTcpClientAsync(cancellationToken).ConfigureAwait(false);
             }
-            catch (Exception) when (cancellationToken.IsCancellationRequested)
+            catch (SocketException) when (cancellationToken.IsCancellationRequested)
             {
                 break;
             }
 
             int sessionId = Interlocked.Increment(ref _nextSessionId);
-            Task session = ReceiveSafelyAsync(connection, cancellationToken);
+            Task session = ReceiveSafelyAsync(client, cancellationToken);
             _sessions[sessionId] = session;
             _ = session.ContinueWith(
                 completedTask => _sessions.TryRemove(sessionId, out _),
@@ -68,7 +69,7 @@ internal sealed class ReceiverHost(
         }
     }
 
-    private async Task ReceiveSafelyAsync(IReliableByteStream connection, CancellationToken cancellationToken)
+    private async Task ReceiveSafelyAsync(TcpClient client, CancellationToken cancellationToken)
     {
         string destination = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Downloads", "Drop");
@@ -78,7 +79,7 @@ internal sealed class ReceiverHost(
             await _sessionGate.WaitAsync(cancellationToken).ConfigureAwait(false);
             enteredGate = true;
             ReceiveSessionResult result = await new TcpFileReceiver(localDevice)
-                .ReceiveAsync(connection, destination, decide, progress, cancellationToken)
+                .ReceiveAsync(client, destination, decide, progress, cancellationToken)
                 .ConfigureAwait(false);
             SessionEnded?.Invoke(this, result);
         }
@@ -91,6 +92,7 @@ internal sealed class ReceiverHost(
         }
         finally
         {
+            client.Dispose();
             if (enteredGate) _sessionGate.Release();
         }
     }
