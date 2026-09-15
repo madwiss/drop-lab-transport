@@ -7,6 +7,7 @@ using System.Windows;
 using System.Windows.Controls;
 using Drop.Discovery;
 using Drop.Protocol;
+using Drop.Transport;
 using Microsoft.Win32;
 
 namespace Drop.Windows;
@@ -82,9 +83,9 @@ public partial class MainWindow : Window
         {
             Progress<FileTransferProgress> progress = new(_transfer.ReportProgress);
             Progress<SendStage> stages = new(_transfer.ReportStage);
-            TcpFileSender senderCore = new(_localDevice);
+            TcpFileSender senderCore = new(_localDevice, new TcpTransportConnector());
             await senderCore.SendAsync(
-                endpoint, file.FullName, file.Name,
+                new TcpTransportEndpoint(endpoint), file.FullName, file.Name,
                 progress, _sendCancellation.Token, stages);
             _transfer.Complete();
         }

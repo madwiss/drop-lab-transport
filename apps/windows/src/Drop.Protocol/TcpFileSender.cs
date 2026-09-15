@@ -1,19 +1,18 @@
 using System.Buffers;
-using System.Net;
-using System.Net.Sockets;
 using System.Security.Cryptography;
+using Drop.Transport;
 
 namespace Drop.Protocol;
 
 /// <summary>
-/// Sends one file over a TCP Protocol v1 session. Discovery and UI are intentionally out of scope.
+/// Sends one file over a Protocol v1 reliable-stream session. Discovery and UI are intentionally out of scope.
 /// </summary>
-public sealed class TcpFileSender(DeviceInfo localDevice)
+public sealed class TcpFileSender(DeviceInfo localDevice, ITransportConnector connector)
 {
     private const int BufferSize = 128 * 1024;
 
     public async Task<SendSessionResult> SendAsync(
-        IPEndPoint endpoint,
+        ITransportEndpoint endpoint,
         string sourcePath,
         string? remoteFileName = null,
         IProgress<FileTransferProgress>? progress = null,
@@ -21,6 +20,7 @@ public sealed class TcpFileSender(DeviceInfo localDevice)
         IProgress<SendStage>? stageProgress = null)
     {
         ArgumentNullException.ThrowIfNull(endpoint);
+        ArgumentNullException.ThrowIfNull(connector);
         ArgumentException.ThrowIfNullOrWhiteSpace(sourcePath);
 
         FileInfo source = new(sourcePath);
@@ -35,9 +35,10 @@ public sealed class TcpFileSender(DeviceInfo localDevice)
         long size = source.Length;
 
         stageProgress?.Report(SendStage.Connecting);
-        using TcpClient client = new(endpoint.AddressFamily);
-        await client.ConnectAsync(endpoint.Address, endpoint.Port, cancellationToken).ConfigureAwait(false);
-        await using NetworkStream stream = client.GetStream();
+        await using IReliableByteStream connection = await connector
+            .ConnectAsync(endpoint, cancellationToken)
+            .ConfigureAwait(false);
+        Stream stream = connection.Stream;
 
         await WriteAsync(stream, new
         {

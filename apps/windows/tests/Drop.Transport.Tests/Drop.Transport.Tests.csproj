@@ -1,4 +1,4 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
     <TargetFramework>net10.0</TargetFramework>
@@ -16,7 +16,6 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\..\src\Drop.Protocol\Drop.Protocol.csproj" />
     <ProjectReference Include="..\..\src\Drop.Transport\Drop.Transport.csproj" />
   </ItemGroup>
 

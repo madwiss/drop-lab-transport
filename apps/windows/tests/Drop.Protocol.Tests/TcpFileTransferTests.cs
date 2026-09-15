@@ -1,7 +1,7 @@
 using System.Net;
-using System.Net.Sockets;
 using System.Security.Cryptography;
 using System.Text.Json;
+using Drop.Transport;
 
 namespace Drop.Protocol.Tests;
 
@@ -96,9 +96,9 @@ public sealed class TcpFileTransferTests
         await session.HandshakeAndStartFileAsync("truncated.bin", 100, new string('0', 64));
 
         await session.Stream.WriteAsync(new byte[10]);
-        session.Client.Client.Shutdown(SocketShutdown.Send);
+        await session.Connection.DisposeAsync();
 
-        await Assert.ThrowsExactlyAsync<EndOfStreamException>(async () => await session.ReceiverTask);
+        await Assert.ThrowsAsync<IOException>(async () => await session.ReceiverTask);
         Assert.IsEmpty(Directory.GetFiles(test.Destination));
     }
 
@@ -188,27 +188,20 @@ public sealed class TcpFileTransferTests
         string destination,
         string? remoteName = null)
     {
-        TcpListener listener = new(IPAddress.Loopback, 0);
+        await using TcpTransportListener listener = new(IPAddress.Loopback, 0);
         listener.Start();
-        try
+        TcpTransportEndpoint endpoint = listener.LocalEndpoint;
+        TcpFileReceiver receiver = new(ReceiverDevice);
+        Task<ReceiveSessionResult> receiveTask = Task.Run(async () =>
         {
-            IPEndPoint endpoint = (IPEndPoint)listener.LocalEndpoint;
-            TcpFileReceiver receiver = new(ReceiverDevice);
-            Task<ReceiveSessionResult> receiveTask = Task.Run(async () =>
-            {
-                TcpClient accepted = await listener.AcceptTcpClientAsync();
-                return await receiver.ReceiveAsync(accepted, destination, AcceptOffer);
-            });
+            IReliableByteStream accepted = await listener.AcceptAsync();
+            return await receiver.ReceiveAsync(accepted, destination, AcceptOffer);
+        });
 
-            TcpFileSender sender = new(SenderDevice);
-            SendSessionResult sendResult = await sender.SendAsync(endpoint, source, remoteName);
-            ReceiveSessionResult receiveResult = await receiveTask;
-            return new TransferPair(sendResult, receiveResult, receiveResult.Files.Single().Path);
-        }
-        finally
-        {
-            listener.Stop();
-        }
+        TcpFileSender sender = new(SenderDevice, new TcpTransportConnector());
+        SendSessionResult sendResult = await sender.SendAsync(endpoint, source, remoteName);
+        ReceiveSessionResult receiveResult = await receiveTask;
+        return new TransferPair(sendResult, receiveResult, receiveResult.Files.Single().Path);
     }
 
     private static async Task<string> HashFileAsync(string path)
@@ -259,22 +252,20 @@ public sealed class TcpFileTransferTests
     private sealed class ManualSession : IAsyncDisposable
     {
         private ManualSession(
-            TcpListener listener,
-            TcpClient client,
-            NetworkStream stream,
+            TcpTransportListener listener,
+            IReliableByteStream connection,
             Task<ReceiveSessionResult> receiverTask)
         {
             Listener = listener;
-            Client = client;
-            Stream = stream;
+            Connection = connection;
             ReceiverTask = receiverTask;
         }
 
-        public TcpListener Listener { get; }
+        public TcpTransportListener Listener { get; }
 
-        public TcpClient Client { get; }
+        public IReliableByteStream Connection { get; }
 
-        public NetworkStream Stream { get; }
+        public Stream Stream => Connection.Stream;
 
         public Task<ReceiveSessionResult> ReceiverTask { get; }
 
@@ -287,17 +278,16 @@ public sealed class TcpFileTransferTests
             CancellationToken receiverCancellation = default,
             Func<IncomingTransferOffer, CancellationToken, ValueTask<IncomingTransferDecision>>? decide = null)
         {
-            TcpListener listener = new(IPAddress.Loopback, 0);
+            TcpTransportListener listener = new(IPAddress.Loopback, 0);
             listener.Start();
-            Task<TcpClient> acceptTask = listener.AcceptTcpClientAsync();
-            TcpClient client = new(AddressFamily.InterNetwork);
-            await client.ConnectAsync((IPEndPoint)listener.LocalEndpoint);
-            TcpClient accepted = await acceptTask;
+            ValueTask<IReliableByteStream> acceptTask = listener.AcceptAsync();
+            IReliableByteStream client = await new TcpTransportConnector().ConnectAsync(listener.LocalEndpoint);
+            IReliableByteStream accepted = await acceptTask;
             TcpFileReceiver receiver = new(ReceiverDevice);
             Task<ReceiveSessionResult> receiverTask = receiver.ReceiveAsync(
                 accepted, destination, decide ?? AcceptOffer, progress: null,
                 cancellationToken: receiverCancellation);
-            return new ManualSession(listener, client, client.GetStream(), receiverTask);
+            return new ManualSession(listener, client, receiverTask);
         }
 
         public async Task HandshakeAndStartFileAsync(string name, long size, string sha256)
@@ -356,9 +346,8 @@ public sealed class TcpFileTransferTests
 
         public async ValueTask DisposeAsync()
         {
-            await Stream.DisposeAsync();
-            Client.Dispose();
-            Listener.Stop();
+            await Connection.DisposeAsync();
+            await Listener.DisposeAsync();
         }
 
         private async Task WriteAsync(object message) =>

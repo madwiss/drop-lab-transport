@@ -11,6 +11,7 @@
   <ItemGroup>
     <ProjectReference Include="..\Drop.Discovery\Drop.Discovery.csproj" />
     <ProjectReference Include="..\Drop.Protocol\Drop.Protocol.csproj" />
+    <ProjectReference Include="..\Drop.Transport\Drop.Transport.csproj" />
   </ItemGroup>
 
 </Project>

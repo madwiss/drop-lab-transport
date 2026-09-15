@@ -1,25 +1,25 @@
 using System.Buffers;
-using System.Net.Sockets;
 using System.Security.Cryptography;
 using System.Text.Json;
+using Drop.Transport;
 
 namespace Drop.Protocol;
 
 /// <summary>
-/// Receives one Protocol v1 file-transfer session over an established TCP connection.
+/// Receives one Protocol v1 file-transfer session over an established reliable byte stream.
 /// </summary>
 public sealed class TcpFileReceiver(DeviceInfo localDevice)
 {
     private const int BufferSize = 128 * 1024;
 
     public async Task<ReceiveSessionResult> ReceiveAsync(
-        TcpClient client,
+        IReliableByteStream connection,
         string destinationDirectory,
         Func<IncomingTransferOffer, CancellationToken, ValueTask<IncomingTransferDecision>> decide,
         IProgress<FileTransferProgress>? progress = null,
         CancellationToken cancellationToken = default)
     {
-        ArgumentNullException.ThrowIfNull(client);
+        ArgumentNullException.ThrowIfNull(connection);
         ArgumentException.ThrowIfNullOrWhiteSpace(destinationDirectory);
         ArgumentNullException.ThrowIfNull(decide);
 
@@ -27,9 +27,9 @@ public sealed class TcpFileReceiver(DeviceInfo localDevice)
         Directory.CreateDirectory(directory);
         string? activePartialPath = null;
 
-        using (client)
-        await using (NetworkStream stream = client.GetStream())
+        await using (connection)
         {
+            Stream stream = connection.Stream;
             try
             {
                 DeviceInfo sender;
