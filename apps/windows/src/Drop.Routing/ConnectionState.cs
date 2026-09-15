@@ -32,12 +32,37 @@ public sealed record ConnectionFailure(
     bool IsRetryable,
     string? Diagnostic = null);
 
-public sealed record RetryMetadata(
-    int Attempt,
-    int MaxAttempts,
-    TimeSpan Delay,
-    DateTimeOffset? RetryNotBefore = null)
+public sealed record RetryMetadata
 {
+    public RetryMetadata(
+        int Attempt,
+        int MaxAttempts,
+        TimeSpan Delay,
+        DateTimeOffset? RetryNotBefore = null)
+    {
+        if (Attempt < 0)
+            throw new ArgumentOutOfRangeException(nameof(Attempt));
+        if (MaxAttempts < 0)
+            throw new ArgumentOutOfRangeException(nameof(MaxAttempts));
+        if (Attempt > MaxAttempts)
+            throw new ArgumentOutOfRangeException(nameof(Attempt), "Attempt cannot exceed MaxAttempts.");
+        if (Delay < TimeSpan.Zero)
+            throw new ArgumentOutOfRangeException(nameof(Delay));
+
+        this.Attempt = Attempt;
+        this.MaxAttempts = MaxAttempts;
+        this.Delay = Delay;
+        this.RetryNotBefore = RetryNotBefore;
+    }
+
+    public int Attempt { get; }
+
+    public int MaxAttempts { get; }
+
+    public TimeSpan Delay { get; }
+
+    public DateTimeOffset? RetryNotBefore { get; }
+
     public bool HasAttemptsRemaining => Attempt < MaxAttempts;
 
     public RetryMetadata Next(TimeSpan delay, DateTimeOffset? retryNotBefore = null)
@@ -45,12 +70,7 @@ public sealed record RetryMetadata(
         if (!HasAttemptsRemaining)
             throw new InvalidOperationException("No retry attempts remain.");
 
-        return this with
-        {
-            Attempt = Attempt + 1,
-            Delay = delay,
-            RetryNotBefore = retryNotBefore
-        };
+        return new RetryMetadata(Attempt + 1, MaxAttempts, delay, retryNotBefore);
     }
 }
 

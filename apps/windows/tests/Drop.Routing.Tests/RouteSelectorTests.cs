@@ -65,6 +65,36 @@ public sealed class RouteSelectorTests
         Assert.AreEqual("remote", selected.CandidateId);
     }
 
+    [TestMethod]
+    public void PeerRoutesSnapshotsCandidateCollection()
+    {
+        List<ConnectionCandidate> candidates =
+        [
+            Candidate("lan", RouteKind.LocalLan)
+        ];
+        PeerRoutes peer = new("peer-1", candidates);
+
+        candidates.Clear();
+        candidates.Add(Candidate("relay", RouteKind.RemoteRelay));
+
+        Assert.AreEqual(1, peer.Candidates.Count);
+        Assert.AreEqual("lan", peer.Candidates[0].CandidateId);
+    }
+
+    [TestMethod]
+    public void ConnectionCandidateRejectsInvalidValues()
+    {
+        Assert.Throws<ArgumentException>(() => new ConnectionCandidate(
+            " ", RouteKind.LocalLan, TransportKind.ReliableByteStream,
+            ReliableStream, CandidateAvailability.Reachable));
+        Assert.Throws<ArgumentOutOfRangeException>(() => new ConnectionCandidate(
+            "lan", (RouteKind)999, TransportKind.ReliableByteStream,
+            ReliableStream, CandidateAvailability.Reachable));
+        Assert.Throws<ArgumentOutOfRangeException>(() => new ConnectionCandidate(
+            "lan", RouteKind.LocalLan, TransportKind.ReliableByteStream,
+            ReliableStream, CandidateAvailability.Reachable, priority: -1));
+    }
+
     private static ConnectionCandidate Candidate(
         string id,
         RouteKind routeKind,

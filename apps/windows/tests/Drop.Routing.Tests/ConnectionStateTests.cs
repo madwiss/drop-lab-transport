@@ -71,4 +71,13 @@ public sealed class ConnectionStateTests
 
         Assert.Throws<InvalidOperationException>(() => connecting.Recover(failure, retry));
     }
+
+    [TestMethod]
+    public void RetryMetadataRejectsInvalidValues()
+    {
+        Assert.Throws<ArgumentOutOfRangeException>(() => new RetryMetadata(-1, 3, TimeSpan.Zero));
+        Assert.Throws<ArgumentOutOfRangeException>(() => new RetryMetadata(0, -1, TimeSpan.Zero));
+        Assert.Throws<ArgumentOutOfRangeException>(() => new RetryMetadata(4, 3, TimeSpan.Zero));
+        Assert.Throws<ArgumentOutOfRangeException>(() => new RetryMetadata(0, 3, TimeSpan.FromMilliseconds(-1)));
+    }
 }
