@@ -17,6 +17,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\Drop.Routing\Drop.Routing.csproj" />
+    <ProjectReference Include="..\..\src\Drop.Security\Drop.Security.csproj" />
   </ItemGroup>
 
 </Project>

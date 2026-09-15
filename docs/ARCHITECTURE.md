@@ -223,6 +223,16 @@ No account or cloud identity system is required.
 Trust data should be replaceable later by a stronger cryptographic
 pairing model without changing the transfer protocol fundamentally.
 
+Discovery identity and authenticated session identity are separate. A
+device ID, hostname, IP address, route label, or other discovery metadata
+only identifies a connection candidate and never authenticates a peer.
+When a transport requires authenticated identity, the session starts as
+unauthenticated and becomes authenticated only after a challenge/proof
+verification succeeds against the peer public-key fingerprint. A known
+expected fingerprint may be supplied as policy input before verification.
+Protocol v1 LAN sessions remain allowed without this authentication hook
+for MVP compatibility and are represented explicitly as unauthenticated.
+
 Security
 
 MVP security priorities:

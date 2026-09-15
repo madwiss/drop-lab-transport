@@ -17,6 +17,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\Drop.Transport\Drop.Transport.csproj" />
+    <ProjectReference Include="..\..\src\Drop.Security\Drop.Security.csproj" />
   </ItemGroup>
 
 </Project>

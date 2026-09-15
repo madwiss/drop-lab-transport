@@ -41,6 +41,11 @@ Completed
 -   explicit mDNS goodbye records remove sources immediately; TTL expiry removes stale sources during a 15-second maintenance sweep
 -   stop, caller cancellation, restart, and async disposal release the mDNS backend and its multicast sockets
 -   deterministic discovery tests cover TXT/SRV/address parsing, validation, deduplication, ignore-self behavior, updates, source removal, TTL expiry, event flow, restart, cancellation, and disposal
+-   transport-neutral session identity now separates unauthenticated discovery metadata from cryptographically authenticated peer identity
+-   sessions may carry an expected peer public-key fingerprint without treating that expectation or matching mDNS device IDs as authentication
+-   ECDSA challenge/proof verification promotes a session to authenticated only after successful proof verification and records typed failures for unexpected keys, challenge mismatch, and invalid proofs
+-   routing surfaces authentication failure as a non-retryable typed connection failure while preserving the verified peer fingerprint on success
+-   legacy Protocol v1 LAN transport remains explicitly unauthenticated and usable by default, preserving current MVP transfer behavior
 -   2026-09-09 full Windows Release build: succeeded with 0 warnings and 0 errors
 -   2026-09-09 all automated tests: 29 passed, 0 failed, 0 skipped
 -   native WPF application added under `apps/windows/src/Drop.Windows.App` without introducing another UI framework or package

@@ -1,4 +1,5 @@
 using Drop.Protocol;
+using Drop.Security;
 
 namespace Drop.Routing.Tests;
 
@@ -62,6 +63,37 @@ public sealed class ConnectionStateTests
 
         Assert.AreEqual(ConnectionLifecycleState.Completed, completed.State);
         Assert.IsTrue(completed.IsTerminal);
+    }
+
+    [TestMethod]
+    public void MatchingDiscoveryDeviceIdDoesNotAuthenticateConnectionSession()
+    {
+        DiscoveryPeerIdentity discovery = new(DeviceId: "peer-1", HostName: "peer.local");
+        PeerSessionIdentity identity = PeerSessionIdentity.Unauthenticated(discovery);
+
+        ConnectionSessionState connected = ConnectionSessionState.Selecting(identity)
+            .Connecting(Candidate)
+            .Connected();
+
+        Assert.AreEqual(PeerAuthenticationState.Unauthenticated, connected.PeerIdentity!.AuthenticationState);
+        Assert.IsNull(connected.PeerIdentity.AuthenticatedIdentity);
+    }
+
+    [TestMethod]
+    public void AuthenticationFailureTerminatesConnectionWithTypedFailure()
+    {
+        ConnectionSessionState connected = ConnectionSessionState.Selecting()
+            .Connecting(Candidate)
+            .Connected();
+        SessionAuthenticationResult failedAuthentication = SessionAuthenticationResult.Failed(
+            AuthenticationFailureKind.InvalidProof,
+            "bad proof");
+
+        ConnectionSessionState failed = connected.ApplyAuthentication(failedAuthentication);
+
+        Assert.AreEqual(ConnectionLifecycleState.Failed, failed.State);
+        Assert.AreEqual(ConnectionFailureKind.AuthenticationFailed, failed.Failure!.Kind);
+        Assert.AreEqual(PeerAuthenticationState.Failed, failed.PeerIdentity!.AuthenticationState);
     }
 
     [TestMethod]

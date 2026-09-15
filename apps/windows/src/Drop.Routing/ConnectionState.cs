@@ -1,3 +1,5 @@
+using Drop.Security;
+
 namespace Drop.Routing;
 
 public enum ConnectionLifecycleState
@@ -79,20 +81,23 @@ public sealed record ConnectionSessionState(
     ConnectionLifecycleState State,
     ConnectionCandidate? Candidate = null,
     ConnectionFailure? Failure = null,
-    RetryMetadata? Retry = null)
+    RetryMetadata? Retry = null,
+    PeerSessionIdentity? PeerIdentity = null)
 {
     public bool IsTerminal => State is ConnectionLifecycleState.Failed
         or ConnectionLifecycleState.Cancelled
         or ConnectionLifecycleState.Completed;
 
-    public static ConnectionSessionState Selecting() =>
-        new(ConnectionLifecycleState.SelectingRoute);
+    public static ConnectionSessionState Selecting(PeerSessionIdentity? peerIdentity = null) =>
+        new(
+            ConnectionLifecycleState.SelectingRoute,
+            PeerIdentity: peerIdentity ?? PeerSessionIdentity.Unauthenticated());
 
     public ConnectionSessionState Connecting(ConnectionCandidate candidate)
     {
         EnsureState(ConnectionLifecycleState.SelectingRoute, ConnectionLifecycleState.Recovering);
         ArgumentNullException.ThrowIfNull(candidate);
-        return new(ConnectionLifecycleState.Connecting, candidate, Retry: Retry);
+        return new(ConnectionLifecycleState.Connecting, candidate, Retry: Retry, PeerIdentity: PeerIdentity);
     }
 
     public ConnectionSessionState Connected()
@@ -117,7 +122,7 @@ public sealed record ConnectionSessionState(
         if (!retry.HasAttemptsRemaining)
             throw new InvalidOperationException("Recovery requires a remaining retry attempt.");
 
-        return new(ConnectionLifecycleState.Recovering, Candidate, failure, retry);
+        return new(ConnectionLifecycleState.Recovering, Candidate, failure, retry, PeerIdentity);
     }
 
     public ConnectionSessionState WaitForRetry(TimeSpan delay, DateTimeOffset? retryNotBefore = null)
@@ -159,6 +164,29 @@ public sealed record ConnectionSessionState(
     {
         EnsureState(ConnectionLifecycleState.Connected, ConnectionLifecycleState.Transferring);
         return this with { State = ConnectionLifecycleState.Completed, Failure = null };
+    }
+
+    public ConnectionSessionState ApplyAuthentication(SessionAuthenticationResult result)
+    {
+        EnsureNotTerminal();
+        ArgumentNullException.ThrowIfNull(result);
+        PeerSessionIdentity currentIdentity = PeerIdentity ?? PeerSessionIdentity.Unauthenticated();
+        PeerSessionIdentity updatedIdentity = currentIdentity.Apply(result);
+
+        if (updatedIdentity.AuthenticationState == PeerAuthenticationState.Failed)
+        {
+            return this with
+            {
+                State = ConnectionLifecycleState.Failed,
+                PeerIdentity = updatedIdentity,
+                Failure = new ConnectionFailure(
+                    ConnectionFailureKind.AuthenticationFailed,
+                    IsRetryable: false,
+                    updatedIdentity.Failure?.Diagnostic)
+            };
+        }
+
+        return this with { PeerIdentity = updatedIdentity, Failure = null };
     }
 
     private void EnsureNotTerminal()
