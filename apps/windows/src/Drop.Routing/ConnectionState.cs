@@ -24,7 +24,8 @@ public enum ConnectionFailureKind
     TransportInterrupted = 6,
     ProtocolError = 7,
     RetryExhausted = 8,
-    Unknown = 9
+    Cancelled = 9,
+    Unknown = 10
 }
 
 public sealed record ConnectionFailure(

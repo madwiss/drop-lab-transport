@@ -28,6 +28,7 @@ public sealed class TcpFileReceiver(DeviceInfo localDevice)
         string directory = Path.GetFullPath(destinationDirectory);
         Directory.CreateDirectory(directory);
         string? activePartialPath = null;
+        string? activeFinalPath = null;
 
         await using (connection)
         {
@@ -35,23 +36,23 @@ public sealed class TcpFileReceiver(DeviceInfo localDevice)
             try
             {
                 DeviceInfo sender;
-                using (JsonDocument hello = await ProtocolMessage.ReadExpectedAsync(
-                    stream, "HELLO", cancellationToken).ConfigureAwait(false))
+                using (JsonDocument hello = await ReadControlAsync(
+                    stream, "HELLO", timeoutOptions.Handshake, cancellationToken).ConfigureAwait(false))
                 {
                     sender = ReadDevice(hello.RootElement);
                 }
 
-                await WriteAsync(stream, new
+                await WriteControlAsync(stream, new
                 {
                     type = "HELLO_ACK",
                     protocolVersion = ProtocolMessage.Version,
                     device = DeviceJson(localDevice)
-                }, cancellationToken).ConfigureAwait(false);
+                }, timeoutOptions.Handshake, cancellationToken, "HELLO_ACK").ConfigureAwait(false);
 
                 OfferedFile offered;
                 Guid transferId;
-                using (JsonDocument offer = await ProtocolMessage.ReadExpectedAsync(
-                    stream, "OFFER", cancellationToken).ConfigureAwait(false))
+                using (JsonDocument offer = await ReadControlAsync(
+                    stream, "OFFER", timeoutOptions.Handshake, cancellationToken).ConfigureAwait(false))
                 {
                     transferId = ProtocolMessage.RequiredGuid(offer.RootElement, "transferId");
                     offered = ReadSingleOfferedFile(offer.RootElement);
@@ -64,30 +65,34 @@ public sealed class TcpFileReceiver(DeviceInfo localDevice)
 
                 IncomingTransferOffer incomingOffer = new(
                     transferId, sender, offered.FileId, offered.Name, offered.Size);
-                IncomingTransferDecision decision = await WithTimeout(decide(incomingOffer, cancellationToken).AsTask(), timeoutOptions.ReceiverAcceptance, cancellationToken, "receiver acceptance")
+                IncomingTransferDecision decision = await TransferTimeout.RunAsync(
+                    token => decide(incomingOffer, token).AsTask(),
+                    timeoutOptions.ReceiverAcceptance,
+                    cancellationToken,
+                    "receiver acceptance")
                     .ConfigureAwait(false);
                 if (decision == IncomingTransferDecision.Decline)
                 {
-                    await WriteAsync(stream, new
+                    await WriteControlAsync(stream, new
                     {
                         type = "DECLINE",
                         protocolVersion = ProtocolMessage.Version,
                         transferId,
                         reason = "user_declined"
-                    }, cancellationToken).ConfigureAwait(false);
+                    }, timeoutOptions.Handshake, cancellationToken, "DECLINE").ConfigureAwait(false);
                     return new ReceiveSessionResult(transferId, false, [], "DECLINED");
                 }
 
-                await WriteAsync(stream, new
+                await WriteControlAsync(stream, new
                 {
                     type = "ACCEPT",
                     protocolVersion = ProtocolMessage.Version,
                     transferId
-                }, cancellationToken).ConfigureAwait(false);
+                }, timeoutOptions.Handshake, cancellationToken, "ACCEPT").ConfigureAwait(false);
 
                 string expectedHash;
-                using (JsonDocument fileStart = await ProtocolMessage.ReadExpectedAsync(
-                    stream, "FILE_START", cancellationToken).ConfigureAwait(false))
+                using (JsonDocument fileStart = await ReadControlAsync(
+                    stream, "FILE_START", timeoutOptions.Handshake, cancellationToken).ConfigureAwait(false))
                 {
                     JsonElement root = fileStart.RootElement;
                     ProtocolMessage.RequireTransfer(root, transferId);
@@ -112,11 +117,17 @@ public sealed class TcpFileReceiver(DeviceInfo localDevice)
                 DestinationFileNames.EnsureInsideDirectory(directory, activePartialPath);
 
                 string actualHash = await ReceivePayloadAsync(
-                    stream, activePartialPath, offered.FileId, offered.Size, progress, cancellationToken)
+                    stream,
+                    activePartialPath,
+                    offered.FileId,
+                    offered.Size,
+                    progress,
+                    timeoutOptions.PayloadStall,
+                    cancellationToken)
                     .ConfigureAwait(false);
 
-                using (JsonDocument fileEnd = await ProtocolMessage.ReadExpectedAsync(
-                    stream, "FILE_END", cancellationToken).ConfigureAwait(false))
+                using (JsonDocument fileEnd = await ReadControlAsync(
+                    stream, "FILE_END", timeoutOptions.Handshake, cancellationToken).ConfigureAwait(false))
                 {
                     ProtocolMessage.RequireTransfer(fileEnd.RootElement, transferId);
                     if (ProtocolMessage.RequiredGuid(fileEnd.RootElement, "fileId") != offered.FileId)
@@ -131,29 +142,32 @@ public sealed class TcpFileReceiver(DeviceInfo localDevice)
                     DeletePartial(activePartialPath);
                     activePartialPath = null;
                     await WriteFileResultAsync(
-                        stream, transferId, offered.FileId, "hash_mismatch", cancellationToken)
+                        stream, transferId, offered.FileId, "hash_mismatch", timeoutOptions.Handshake, cancellationToken)
                         .ConfigureAwait(false);
                     return new ReceiveSessionResult(transferId, false, [], "HASH_MISMATCH");
                 }
 
-                string finalPath = MoveToUniqueFinalPath(activePartialPath, directory, offered.Name);
-                activePartialPath = null;
-
-                await WriteFileResultAsync(stream, transferId, offered.FileId, "ok", cancellationToken)
+                await WriteFileResultAsync(stream, transferId, offered.FileId, "ok", timeoutOptions.Handshake, cancellationToken)
                     .ConfigureAwait(false);
 
-                using (JsonDocument complete = await ProtocolMessage.ReadExpectedAsync(
-                    stream, "COMPLETE", cancellationToken).ConfigureAwait(false))
+                using (JsonDocument complete = await ReadControlAsync(
+                    stream, "COMPLETE", timeoutOptions.Handshake, cancellationToken).ConfigureAwait(false))
                 {
                     ProtocolMessage.RequireTransfer(complete.RootElement, transferId);
                 }
 
-                await WriteAsync(stream, new
+                activeFinalPath = MoveToUniqueFinalPath(activePartialPath, directory, offered.Name);
+                activePartialPath = null;
+
+                await WriteControlAsync(stream, new
                 {
                     type = "COMPLETE_ACK",
                     protocolVersion = ProtocolMessage.Version,
                     transferId
-                }, cancellationToken).ConfigureAwait(false);
+                }, timeoutOptions.Handshake, cancellationToken, "COMPLETE_ACK").ConfigureAwait(false);
+
+                string finalPath = activeFinalPath;
+                activeFinalPath = null;
 
                 return new ReceiveSessionResult(
                     transferId,
@@ -166,29 +180,11 @@ public sealed class TcpFileReceiver(DeviceInfo localDevice)
                 {
                     DeletePartial(activePartialPath);
                 }
+                if (activeFinalPath is not null)
+                {
+                    DeletePartial(activeFinalPath);
+                }
             }
-        }
-    }
-
-    private static async Task<T> WithTimeout<T>(Task<T> task, TimeSpan timeout, CancellationToken callerToken, string phase)
-    {
-        try
-        {
-            using CancellationTokenSource timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(callerToken);
-            timeoutCts.CancelAfter(timeout);
-            return await task.WaitAsync(timeoutCts.Token).ConfigureAwait(false);
-        }
-        catch (OperationCanceledException) when (!callerToken.IsCancellationRequested)
-        {
-            throw new TransferFailedException(TransferFailureKind.Timeout, $"Transfer {phase} timed out.");
-        }
-        catch (OperationCanceledException)
-        {
-            throw new TransferFailedException(TransferFailureKind.Cancelled, "Transfer cancelled.");
-        }
-        catch (IOException ex)
-        {
-            throw new TransferFailedException(TransferFailureKind.Transport, $"Transport failed during {phase}.", ex);
         }
     }
 
@@ -198,6 +194,7 @@ public sealed class TcpFileReceiver(DeviceInfo localDevice)
         Guid fileId,
         long size,
         IProgress<FileTransferProgress>? progress,
+        TimeSpan stallTimeout,
         CancellationToken cancellationToken)
     {
         byte[] buffer = ArrayPool<byte>.Shared.Rent(BufferSize);
@@ -219,11 +216,16 @@ public sealed class TcpFileReceiver(DeviceInfo localDevice)
             while (remaining > 0)
             {
                 int requested = (int)Math.Min(buffer.Length, remaining);
-                int read = await source.ReadAsync(buffer.AsMemory(0, requested), cancellationToken)
-                    .ConfigureAwait(false);
+                int read = await TransferTimeout.RunAsync(
+                    async token => await source.ReadAsync(buffer.AsMemory(0, requested), token).ConfigureAwait(false),
+                    stallTimeout,
+                    cancellationToken,
+                    "payload read").ConfigureAwait(false);
                 if (read == 0)
                 {
-                    throw new EndOfStreamException("Connection ended before the file payload was complete.");
+                    throw new TransferFailedException(
+                        TransferFailureKind.Transport,
+                        "Connection ended before the file payload was complete.");
                 }
 
                 await destination.WriteAsync(buffer.AsMemory(0, read), cancellationToken)
@@ -236,6 +238,14 @@ public sealed class TcpFileReceiver(DeviceInfo localDevice)
 
             await destination.FlushAsync(cancellationToken).ConfigureAwait(false);
             return Convert.ToHexStringLower(hash.GetHashAndReset());
+        }
+        catch (OperationCanceledException ex)
+        {
+            throw new TransferFailedException(TransferFailureKind.Cancelled, "Transfer cancelled.", ex);
+        }
+        catch (IOException ex)
+        {
+            throw new TransferFailedException(TransferFailureKind.Transport, "Receive payload failed.", ex);
         }
         finally
         {
@@ -308,18 +318,39 @@ public sealed class TcpFileReceiver(DeviceInfo localDevice)
         Guid transferId,
         Guid fileId,
         string status,
+        TimeSpan timeout,
         CancellationToken cancellationToken) =>
-        await WriteAsync(stream, new
+        await WriteControlAsync(stream, new
         {
             type = "FILE_RESULT",
             protocolVersion = ProtocolMessage.Version,
             transferId,
             fileId,
             status
-        }, cancellationToken).ConfigureAwait(false);
+        }, timeout, cancellationToken, "FILE_RESULT").ConfigureAwait(false);
 
-    private static ValueTask WriteAsync(Stream stream, object message, CancellationToken cancellationToken) =>
-        ControlFrameCodec.WriteAsync(stream, ProtocolMessage.Create(message), cancellationToken);
+    private static async Task WriteControlAsync(
+        Stream stream,
+        object message,
+        TimeSpan timeout,
+        CancellationToken cancellationToken,
+        string phase) =>
+        await TransferTimeout.RunAsync(
+            token => ControlFrameCodec.WriteAsync(stream, ProtocolMessage.Create(message), token).AsTask(),
+            timeout,
+            cancellationToken,
+            phase).ConfigureAwait(false);
+
+    private static Task<JsonDocument> ReadControlAsync(
+        Stream stream,
+        string expectedType,
+        TimeSpan timeout,
+        CancellationToken cancellationToken) =>
+        TransferTimeout.RunAsync(
+            token => ProtocolMessage.ReadExpectedAsync(stream, expectedType, token).AsTask(),
+            timeout,
+            cancellationToken,
+            expectedType);
 
     private static object DeviceJson(DeviceInfo device) => new
     {

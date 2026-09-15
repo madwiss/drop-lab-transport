@@ -1,4 +1,5 @@
 using System.Net;
+using System.Net.Sockets;
 using System.Text;
 
 namespace Drop.Transport.Tests;
@@ -36,6 +37,20 @@ public sealed class TcpTransportTests
 
         await Assert.ThrowsAsync<OperationCanceledException>(async () =>
             await listener.AcceptAsync(cancellation.Token));
+    }
+
+    [TestMethod]
+    public async Task ConnectorMapsSocketFailureToTypedTransportFailureAsync()
+    {
+        TcpListener reservation = new(IPAddress.Loopback, 0);
+        reservation.Start();
+        int port = ((IPEndPoint)reservation.LocalEndpoint).Port;
+        reservation.Stop();
+
+        TransportFailureException failure = await Assert.ThrowsAsync<TransportFailureException>(async () =>
+            await new TcpTransportConnector().ConnectAsync(new TcpTransportEndpoint(IPAddress.Loopback, port)));
+
+        Assert.AreEqual(TransportFailureKind.Connection, failure.Kind);
     }
 
     private static async Task ReadExactlyAsync(Stream stream, Memory<byte> buffer)

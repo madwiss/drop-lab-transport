@@ -1,5 +1,19 @@
 namespace Drop.Transport;
 
+public enum TransportFailureKind
+{
+    Connection,
+    Interrupted
+}
+
+public sealed class TransportFailureException : IOException
+{
+    public TransportFailureException(TransportFailureKind kind, string message, Exception? inner = null)
+        : base(message, inner) => Kind = kind;
+
+    public TransportFailureKind Kind { get; }
+}
+
 /// <summary>
 /// Marker for an address understood by a concrete transport adapter.
 /// </summary>

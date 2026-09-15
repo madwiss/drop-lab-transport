@@ -1,3 +1,5 @@
+using Drop.Protocol;
+
 namespace Drop.Routing.Tests;
 
 [TestClass]
@@ -79,5 +81,23 @@ public sealed class ConnectionStateTests
         Assert.Throws<ArgumentOutOfRangeException>(() => new RetryMetadata(0, -1, TimeSpan.Zero));
         Assert.Throws<ArgumentOutOfRangeException>(() => new RetryMetadata(4, 3, TimeSpan.Zero));
         Assert.Throws<ArgumentOutOfRangeException>(() => new RetryMetadata(0, 3, TimeSpan.FromMilliseconds(-1)));
+    }
+
+    [TestMethod]
+    [DataRow(TransferFailureKind.Timeout, ConnectionFailureKind.ConnectionTimeout, true)]
+    [DataRow(TransferFailureKind.Cancelled, ConnectionFailureKind.Cancelled, false)]
+    [DataRow(TransferFailureKind.Transport, ConnectionFailureKind.TransportInterrupted, true)]
+    [DataRow(TransferFailureKind.Protocol, ConnectionFailureKind.ProtocolError, false)]
+    public void TransferFailuresMapToTypedConnectionFailures(
+        TransferFailureKind transferKind,
+        ConnectionFailureKind expectedKind,
+        bool retryable)
+    {
+        TransferFailedException transferFailure = new(transferKind, "failure");
+
+        ConnectionFailure mapped = ConnectionFailureMapper.FromTransferFailure(transferFailure);
+
+        Assert.AreEqual(expectedKind, mapped.Kind);
+        Assert.AreEqual(retryable, mapped.IsRetryable);
     }
 }

@@ -35,6 +35,14 @@ public sealed class TcpTransportConnector : ITransportConnector
                 .ConfigureAwait(false);
             return new TcpReliableByteStream(client);
         }
+        catch (SocketException ex)
+        {
+            client.Dispose();
+            throw new TransportFailureException(
+                TransportFailureKind.Connection,
+                $"TCP connection to {tcpEndpoint} failed.",
+                ex);
+        }
         catch
         {
             client.Dispose();

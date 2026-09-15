@@ -1,179 +1,122 @@
-using System.Buffers;
+﻿using System.Buffers;
 using System.Security.Cryptography;
+using System.Text.Json;
 using Drop.Transport;
 
 namespace Drop.Protocol;
 
-/// <summary>
-/// Sends one file over a Protocol v1 reliable-stream session. Discovery and UI are intentionally out of scope.
-/// </summary>
 public sealed class TcpFileSender(DeviceInfo localDevice, ITransportConnector connector)
 {
     private const int BufferSize = 128 * 1024;
 
-    public async Task<SendSessionResult> SendAsync(
-        ITransportEndpoint endpoint,
-        string sourcePath,
-        string? remoteFileName = null,
-        IProgress<FileTransferProgress>? progress = null,
-        CancellationToken cancellationToken = default,
-        IProgress<SendStage>? stageProgress = null,
-        TransferTimeoutOptions? timeoutOptions = null)
+    public async Task<SendSessionResult> SendAsync(ITransportEndpoint endpoint, string sourcePath, string? remoteFileName = null, IProgress<FileTransferProgress>? progress = null, CancellationToken cancellationToken = default, IProgress<SendStage>? stageProgress = null, TransferTimeoutOptions? timeoutOptions = null)
     {
         ArgumentNullException.ThrowIfNull(endpoint);
         ArgumentNullException.ThrowIfNull(connector);
         ArgumentException.ThrowIfNullOrWhiteSpace(sourcePath);
-
         FileInfo source = new(sourcePath);
-        if (!source.Exists)
-        {
-            throw new FileNotFoundException("Source file was not found.", source.FullName);
-        }
+        if (!source.Exists) throw new FileNotFoundException("Source file was not found.", source.FullName);
 
         Guid transferId = Guid.NewGuid();
         Guid fileId = Guid.NewGuid();
         string offeredName = remoteFileName ?? source.Name;
         long size = source.Length;
-
         timeoutOptions ??= new TransferTimeoutOptions();
+
         stageProgress?.Report(SendStage.Connecting);
-        await using IReliableByteStream connection = await WithTimeout(
-            connector.ConnectAsync(endpoint, cancellationToken).AsTask(),
-            timeoutOptions.Connect,
-            cancellationToken,
-            "connect").ConfigureAwait(false);
+        await using IReliableByteStream connection = await ConnectWithRetryAsync(endpoint, timeoutOptions, cancellationToken).ConfigureAwait(false);
         Stream stream = connection.Stream;
 
-        await WriteAsync(stream, new
-        {
-            type = "HELLO",
-            protocolVersion = ProtocolMessage.Version,
-            device = DeviceJson(localDevice)
-        }, cancellationToken).ConfigureAwait(false);
+        await WriteControlAsync(stream, new { type = "HELLO", protocolVersion = ProtocolMessage.Version, device = DeviceJson(localDevice) }, timeoutOptions.Handshake, cancellationToken, "HELLO").ConfigureAwait(false);
+        using (await ReadControlAsync(stream, "HELLO_ACK", timeoutOptions.Handshake, cancellationToken).ConfigureAwait(false)) { }
 
-        using (await WithTimeout(ProtocolMessage.ReadExpectedAsync(stream, "HELLO_ACK", cancellationToken).AsTask(), timeoutOptions.Handshake, cancellationToken, "handshake")
-            .ConfigureAwait(false))
-        {
-        }
-
-        await WriteAsync(stream, new
-        {
-            type = "OFFER",
-            protocolVersion = ProtocolMessage.Version,
-            transferId,
-            files = new[] { new { fileId, name = offeredName, size } },
-            totalBytes = size
-        }, cancellationToken).ConfigureAwait(false);
+        await WriteControlAsync(stream, new { type = "OFFER", protocolVersion = ProtocolMessage.Version, transferId, files = new[] { new { fileId, name = offeredName, size } }, totalBytes = size }, timeoutOptions.Handshake, cancellationToken, "OFFER").ConfigureAwait(false);
 
         stageProgress?.Report(SendStage.WaitingForAcceptance);
-        using (var accept = await WithTimeout(ProtocolMessage.ReadExpectedAsync(stream, "ACCEPT", cancellationToken).AsTask(), timeoutOptions.ReceiverAcceptance, cancellationToken, "receiver acceptance")
-            .ConfigureAwait(false))
-        {
+        using (JsonDocument accept = await ReadControlAsync(stream, "ACCEPT", timeoutOptions.ReceiverAcceptance, cancellationToken, "receiver acceptance").ConfigureAwait(false))
             ProtocolMessage.RequireTransfer(accept.RootElement, transferId);
-        }
 
         stageProgress?.Report(SendStage.PreparingFile);
         string hash = await ComputeSha256Async(source.FullName, cancellationToken).ConfigureAwait(false);
 
-        await WriteAsync(stream, new
-        {
-            type = "FILE_START",
-            protocolVersion = ProtocolMessage.Version,
-            transferId,
-            fileId,
-            name = offeredName,
-            size,
-            sha256 = hash
-        }, cancellationToken).ConfigureAwait(false);
+        await WriteControlAsync(stream, new { type = "FILE_START", protocolVersion = ProtocolMessage.Version, transferId, fileId, name = offeredName, size, sha256 = hash }, timeoutOptions.Handshake, cancellationToken, "FILE_START").ConfigureAwait(false);
 
         stageProgress?.Report(SendStage.Transferring);
-        await StreamFileAsync(stream, source.FullName, fileId, size, progress, cancellationToken)
-            .ConfigureAwait(false);
+        await StreamFileAsync(stream, source.FullName, fileId, size, progress, timeoutOptions.PayloadStall, cancellationToken).ConfigureAwait(false);
 
         stageProgress?.Report(SendStage.Completing);
-        await WriteAsync(stream, new
-        {
-            type = "FILE_END",
-            protocolVersion = ProtocolMessage.Version,
-            transferId,
-            fileId
-        }, cancellationToken).ConfigureAwait(false);
+        await WriteControlAsync(stream, new { type = "FILE_END", protocolVersion = ProtocolMessage.Version, transferId, fileId }, timeoutOptions.Handshake, cancellationToken, "FILE_END").ConfigureAwait(false);
 
-        using (var result = await ProtocolMessage.ReadExpectedAsync(stream, "FILE_RESULT", cancellationToken)
-            .ConfigureAwait(false))
+        using (JsonDocument result = await ReadControlAsync(stream, "FILE_RESULT", timeoutOptions.Handshake, cancellationToken).ConfigureAwait(false))
         {
             ProtocolMessage.RequireTransfer(result.RootElement, transferId);
             if (ProtocolMessage.RequiredGuid(result.RootElement, "fileId") != fileId)
-            {
-                throw new InvalidDataException("FILE_RESULT has an unexpected fileId.");
-            }
-
+                throw new TransferFailedException(TransferFailureKind.Protocol, "FILE_RESULT has an unexpected fileId.");
             string status = ProtocolMessage.RequiredString(result.RootElement, "status");
-            if (status != "ok")
+            if (status != "ok") throw new TransferFailedException(TransferFailureKind.Protocol, $"Receiver rejected the file: {status}.");
+        }
+
+        await WriteControlAsync(stream, new { type = "COMPLETE", protocolVersion = ProtocolMessage.Version, transferId }, timeoutOptions.Handshake, cancellationToken, "COMPLETE").ConfigureAwait(false);
+        using (JsonDocument completeAck = await ReadControlAsync(stream, "COMPLETE_ACK", timeoutOptions.Handshake, cancellationToken).ConfigureAwait(false))
+            ProtocolMessage.RequireTransfer(completeAck.RootElement, transferId);
+
+        return new SendSessionResult(transferId, [new SentFileResult(fileId, source.FullName, size, hash)]);
+    }
+
+    private async Task<IReliableByteStream> ConnectWithRetryAsync(ITransportEndpoint endpoint, TransferTimeoutOptions options, CancellationToken cancellationToken)
+    {
+        TransferFailedException? lastFailure = null;
+        for (int attempt = 0; attempt <= options.MaxConnectionRetries; attempt++)
+        {
+            try
             {
-                throw new InvalidDataException($"Receiver rejected the file: {status}.");
+                return await TransferTimeout.RunAsync(token => connector.ConnectAsync(endpoint, token).AsTask(), options.Connect, cancellationToken, "connect").ConfigureAwait(false);
+            }
+            catch (TransferFailedException ex) when (ex.Kind is TransferFailureKind.Timeout or TransferFailureKind.Transport && attempt < options.MaxConnectionRetries)
+            {
+                lastFailure = ex;
             }
         }
-
-        await WriteAsync(stream, new
-        {
-            type = "COMPLETE",
-            protocolVersion = ProtocolMessage.Version,
-            transferId
-        }, cancellationToken).ConfigureAwait(false);
-
-        using (var completeAck = await ProtocolMessage.ReadExpectedAsync(stream, "COMPLETE_ACK", cancellationToken)
-            .ConfigureAwait(false))
-        {
-            ProtocolMessage.RequireTransfer(completeAck.RootElement, transferId);
-        }
-
-        return new SendSessionResult(
-            transferId,
-            [new SentFileResult(fileId, source.FullName, size, hash)]);
+        throw lastFailure ?? new TransferFailedException(TransferFailureKind.Transport, "Connection attempts were exhausted.");
     }
 
-    private static async Task<string> ComputeSha256Async(
-        string path,
-        CancellationToken cancellationToken)
+    private static async Task<string> ComputeSha256Async(string path, CancellationToken cancellationToken)
     {
-        await using FileStream file = OpenRead(path);
-        byte[] hash = await SHA256.HashDataAsync(file, cancellationToken).ConfigureAwait(false);
-        return Convert.ToHexStringLower(hash);
+        try
+        {
+            await using FileStream file = OpenRead(path);
+            byte[] hash = await SHA256.HashDataAsync(file, cancellationToken).ConfigureAwait(false);
+            return Convert.ToHexStringLower(hash);
+        }
+        catch (OperationCanceledException ex)
+        {
+            throw new TransferFailedException(TransferFailureKind.Cancelled, "Transfer cancelled.", ex);
+        }
     }
 
-    private static async Task StreamFileAsync(
-        Stream destination,
-        string path,
-        Guid fileId,
-        long expectedSize,
-        IProgress<FileTransferProgress>? progress,
-        CancellationToken cancellationToken)
+    private static async Task StreamFileAsync(Stream destination, string path, Guid fileId, long expectedSize, IProgress<FileTransferProgress>? progress, TimeSpan stallTimeout, CancellationToken cancellationToken)
     {
         await using FileStream source = OpenRead(path);
         byte[] buffer = ArrayPool<byte>.Shared.Rent(BufferSize);
         long remaining = expectedSize;
         long transferred = 0;
         progress?.Report(new FileTransferProgress(fileId, transferred, expectedSize));
-
         try
         {
             while (remaining > 0)
             {
                 int requested = (int)Math.Min(buffer.Length, remaining);
-                int read = await source.ReadAsync(buffer.AsMemory(0, requested), cancellationToken)
-                    .ConfigureAwait(false);
-                if (read == 0)
-                {
-                    throw new EndOfStreamException("Source file became shorter during transfer.");
-                }
-
-                await destination.WriteAsync(buffer.AsMemory(0, read), cancellationToken)
-                    .ConfigureAwait(false);
+                int read = await source.ReadAsync(buffer.AsMemory(0, requested), cancellationToken).ConfigureAwait(false);
+                if (read == 0) throw new TransferFailedException(TransferFailureKind.Protocol, "Source file became shorter during transfer.");
+                await TransferTimeout.RunAsync(async token => await destination.WriteAsync(buffer.AsMemory(0, read), token).ConfigureAwait(false), stallTimeout, cancellationToken, "payload write").ConfigureAwait(false);
                 remaining -= read;
                 transferred += read;
                 progress?.Report(new FileTransferProgress(fileId, transferred, expectedSize));
             }
+        }
+        catch (OperationCanceledException ex)
+        {
+            throw new TransferFailedException(TransferFailureKind.Cancelled, "Transfer cancelled.", ex);
         }
         finally
         {
@@ -181,45 +124,13 @@ public sealed class TcpFileSender(DeviceInfo localDevice, ITransportConnector co
         }
     }
 
-    private static FileStream OpenRead(string path) => new(
-        path,
-        FileMode.Open,
-        FileAccess.Read,
-        FileShare.Read,
-        BufferSize,
-        FileOptions.Asynchronous | FileOptions.SequentialScan);
+    private static FileStream OpenRead(string path) => new(path, FileMode.Open, FileAccess.Read, FileShare.Read, BufferSize, FileOptions.Asynchronous | FileOptions.SequentialScan);
 
-    private static ValueTask WriteAsync(Stream stream, object message, CancellationToken cancellationToken) =>
-        ControlFrameCodec.WriteAsync(stream, ProtocolMessage.Create(message), cancellationToken);
+    private static async Task WriteControlAsync(Stream stream, object message, TimeSpan timeout, CancellationToken cancellationToken, string phase) =>
+        await TransferTimeout.RunAsync(token => ControlFrameCodec.WriteAsync(stream, ProtocolMessage.Create(message), token).AsTask(), timeout, cancellationToken, phase).ConfigureAwait(false);
 
-    private static object DeviceJson(DeviceInfo device) => new
-    {
-        deviceId = device.DeviceId,
-        name = device.Name,
-        platform = device.Platform,
-        appVersion = device.AppVersion,
-        protocolVersion = ProtocolMessage.Version
-    };
+    private static Task<JsonDocument> ReadControlAsync(Stream stream, string expectedType, TimeSpan timeout, CancellationToken cancellationToken, string? phase = null) =>
+        TransferTimeout.RunAsync(token => ProtocolMessage.ReadExpectedAsync(stream, expectedType, token).AsTask(), timeout, cancellationToken, phase ?? expectedType);
 
-    private static async Task<T> WithTimeout<T>(Task<T> task, TimeSpan timeout, CancellationToken callerToken, string phase)
-    {
-        try
-        {
-            using CancellationTokenSource timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(callerToken);
-            timeoutCts.CancelAfter(timeout);
-            return await task.WaitAsync(timeoutCts.Token).ConfigureAwait(false);
-        }
-        catch (OperationCanceledException) when (!callerToken.IsCancellationRequested)
-        {
-            throw new TransferFailedException(TransferFailureKind.Timeout, $"Transfer {phase} timed out.");
-        }
-        catch (OperationCanceledException)
-        {
-            throw new TransferFailedException(TransferFailureKind.Cancelled, "Transfer cancelled.");
-        }
-        catch (IOException ex)
-        {
-            throw new TransferFailedException(TransferFailureKind.Transport, $"Transport failed during {phase}.", ex);
-        }
-    }
+    private static object DeviceJson(DeviceInfo device) => new { deviceId = device.DeviceId, name = device.Name, platform = device.Platform, appVersion = device.AppVersion, protocolVersion = ProtocolMessage.Version };
 }

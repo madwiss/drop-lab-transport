@@ -98,7 +98,9 @@ public sealed class TcpFileTransferTests
         await session.Stream.WriteAsync(new byte[10]);
         await session.Connection.DisposeAsync();
 
-        await Assert.ThrowsAsync<IOException>(async () => await session.ReceiverTask);
+        TransferFailedException failure = await Assert.ThrowsAsync<TransferFailedException>(
+            async () => await session.ReceiverTask);
+        Assert.AreEqual(TransferFailureKind.Transport, failure.Kind);
         Assert.IsEmpty(Directory.GetFiles(test.Destination));
     }
 
@@ -145,14 +147,51 @@ public sealed class TcpFileTransferTests
         await WaitForPartialFileAsync(test.Destination);
         cancellation.Cancel();
 
-        try
+        TransferFailedException failure = await Assert.ThrowsAsync<TransferFailedException>(
+            async () => await session.ReceiverTask);
+        Assert.AreEqual(TransferFailureKind.Cancelled, failure.Kind);
+
+        Assert.IsEmpty(Directory.GetFiles(test.Destination));
+    }
+
+    [TestMethod]
+    public async Task ReceiverPayloadStallTimesOutAndRemovesPartialAsync()
+    {
+        using TestDirectory test = new();
+        TransferTimeoutOptions timeouts = new()
         {
-            await session.ReceiverTask;
-            Assert.Fail("Receiver should have observed cancellation.");
-        }
-        catch (OperationCanceledException)
-        {
-        }
+            Handshake = TimeSpan.FromSeconds(1),
+            ReceiverAcceptance = TimeSpan.FromSeconds(1),
+            PayloadStall = TimeSpan.FromMilliseconds(40)
+        };
+        await using ManualSession session = await ManualSession.StartAsync(
+            test.Destination,
+            timeoutOptions: timeouts);
+        await session.HandshakeAndStartFileAsync("stall.bin", 1024, new string('0', 64));
+
+        TransferFailedException failure = await Assert.ThrowsAsync<TransferFailedException>(
+            async () => await session.ReceiverTask);
+
+        Assert.AreEqual(TransferFailureKind.Timeout, failure.Kind);
+        Assert.IsEmpty(Directory.GetFiles(test.Destination));
+    }
+
+    [TestMethod]
+    public async Task ReceiverDoesNotExposeFinalFileUntilCompleteAsync()
+    {
+        using TestDirectory test = new();
+        byte[] payload = [9, 8, 7, 6];
+        string hash = Convert.ToHexStringLower(SHA256.HashData(payload));
+        await using ManualSession session = await ManualSession.StartAsync(test.Destination);
+        await session.HandshakeAndStartFileAsync("pending.bin", payload.Length, hash);
+
+        await session.Stream.WriteAsync(payload);
+        await session.WriteFileEndAsync();
+        using JsonDocument resultFrame = await ControlFrameCodec.ReadAsync(session.Stream);
+        Assert.AreEqual("ok", resultFrame.RootElement.GetProperty("status").GetString());
+
+        await session.Connection.DisposeAsync();
+        await Assert.ThrowsAsync<Exception>(async () => await session.ReceiverTask);
 
         Assert.IsEmpty(Directory.GetFiles(test.Destination));
     }
@@ -276,7 +315,8 @@ public sealed class TcpFileTransferTests
         public static async Task<ManualSession> StartAsync(
             string destination,
             CancellationToken receiverCancellation = default,
-            Func<IncomingTransferOffer, CancellationToken, ValueTask<IncomingTransferDecision>>? decide = null)
+            Func<IncomingTransferOffer, CancellationToken, ValueTask<IncomingTransferDecision>>? decide = null,
+            TransferTimeoutOptions? timeoutOptions = null)
         {
             TcpTransportListener listener = new(IPAddress.Loopback, 0);
             listener.Start();
@@ -286,7 +326,8 @@ public sealed class TcpFileTransferTests
             TcpFileReceiver receiver = new(ReceiverDevice);
             Task<ReceiveSessionResult> receiverTask = receiver.ReceiveAsync(
                 accepted, destination, decide ?? AcceptOffer, progress: null,
-                cancellationToken: receiverCancellation);
+                cancellationToken: receiverCancellation,
+                timeoutOptions: timeoutOptions);
             return new ManualSession(listener, client, receiverTask);
         }
 

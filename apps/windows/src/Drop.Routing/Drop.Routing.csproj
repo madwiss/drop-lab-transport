@@ -6,4 +6,8 @@
     <Nullable>enable</Nullable>
   </PropertyGroup>
 
+  <ItemGroup>
+    <ProjectReference Include="..\Drop.Protocol\Drop.Protocol.csproj" />
+  </ItemGroup>
+
 </Project>
