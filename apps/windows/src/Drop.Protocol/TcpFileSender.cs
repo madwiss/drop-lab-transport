@@ -17,7 +17,8 @@ public sealed class TcpFileSender(DeviceInfo localDevice, ITransportConnector co
         string? remoteFileName = null,
         IProgress<FileTransferProgress>? progress = null,
         CancellationToken cancellationToken = default,
-        IProgress<SendStage>? stageProgress = null)
+        IProgress<SendStage>? stageProgress = null,
+        TransferTimeoutOptions? timeoutOptions = null)
     {
         ArgumentNullException.ThrowIfNull(endpoint);
         ArgumentNullException.ThrowIfNull(connector);
@@ -34,10 +35,13 @@ public sealed class TcpFileSender(DeviceInfo localDevice, ITransportConnector co
         string offeredName = remoteFileName ?? source.Name;
         long size = source.Length;
 
+        timeoutOptions ??= new TransferTimeoutOptions();
         stageProgress?.Report(SendStage.Connecting);
-        await using IReliableByteStream connection = await connector
-            .ConnectAsync(endpoint, cancellationToken)
-            .ConfigureAwait(false);
+        await using IReliableByteStream connection = await WithTimeout(
+            connector.ConnectAsync(endpoint, cancellationToken).AsTask(),
+            timeoutOptions.Connect,
+            cancellationToken,
+            "connect").ConfigureAwait(false);
         Stream stream = connection.Stream;
 
         await WriteAsync(stream, new
@@ -47,7 +51,7 @@ public sealed class TcpFileSender(DeviceInfo localDevice, ITransportConnector co
             device = DeviceJson(localDevice)
         }, cancellationToken).ConfigureAwait(false);
 
-        using (await ProtocolMessage.ReadExpectedAsync(stream, "HELLO_ACK", cancellationToken)
+        using (await WithTimeout(ProtocolMessage.ReadExpectedAsync(stream, "HELLO_ACK", cancellationToken).AsTask(), timeoutOptions.Handshake, cancellationToken, "handshake")
             .ConfigureAwait(false))
         {
         }
@@ -62,7 +66,7 @@ public sealed class TcpFileSender(DeviceInfo localDevice, ITransportConnector co
         }, cancellationToken).ConfigureAwait(false);
 
         stageProgress?.Report(SendStage.WaitingForAcceptance);
-        using (var accept = await ProtocolMessage.ReadExpectedAsync(stream, "ACCEPT", cancellationToken)
+        using (var accept = await WithTimeout(ProtocolMessage.ReadExpectedAsync(stream, "ACCEPT", cancellationToken).AsTask(), timeoutOptions.ReceiverAcceptance, cancellationToken, "receiver acceptance")
             .ConfigureAwait(false))
         {
             ProtocolMessage.RequireTransfer(accept.RootElement, transferId);
@@ -196,4 +200,26 @@ public sealed class TcpFileSender(DeviceInfo localDevice, ITransportConnector co
         appVersion = device.AppVersion,
         protocolVersion = ProtocolMessage.Version
     };
+
+    private static async Task<T> WithTimeout<T>(Task<T> task, TimeSpan timeout, CancellationToken callerToken, string phase)
+    {
+        try
+        {
+            using CancellationTokenSource timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(callerToken);
+            timeoutCts.CancelAfter(timeout);
+            return await task.WaitAsync(timeoutCts.Token).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (!callerToken.IsCancellationRequested)
+        {
+            throw new TransferFailedException(TransferFailureKind.Timeout, $"Transfer {phase} timed out.");
+        }
+        catch (OperationCanceledException)
+        {
+            throw new TransferFailedException(TransferFailureKind.Cancelled, "Transfer cancelled.");
+        }
+        catch (IOException ex)
+        {
+            throw new TransferFailedException(TransferFailureKind.Transport, $"Transport failed during {phase}.", ex);
+        }
+    }
 }

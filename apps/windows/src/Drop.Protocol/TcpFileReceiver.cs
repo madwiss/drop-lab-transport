@@ -17,11 +17,13 @@ public sealed class TcpFileReceiver(DeviceInfo localDevice)
         string destinationDirectory,
         Func<IncomingTransferOffer, CancellationToken, ValueTask<IncomingTransferDecision>> decide,
         IProgress<FileTransferProgress>? progress = null,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        TransferTimeoutOptions? timeoutOptions = null)
     {
         ArgumentNullException.ThrowIfNull(connection);
         ArgumentException.ThrowIfNullOrWhiteSpace(destinationDirectory);
         ArgumentNullException.ThrowIfNull(decide);
+        timeoutOptions ??= new TransferTimeoutOptions();
 
         string directory = Path.GetFullPath(destinationDirectory);
         Directory.CreateDirectory(directory);
@@ -62,7 +64,7 @@ public sealed class TcpFileReceiver(DeviceInfo localDevice)
 
                 IncomingTransferOffer incomingOffer = new(
                     transferId, sender, offered.FileId, offered.Name, offered.Size);
-                IncomingTransferDecision decision = await decide(incomingOffer, cancellationToken)
+                IncomingTransferDecision decision = await WithTimeout(decide(incomingOffer, cancellationToken).AsTask(), timeoutOptions.ReceiverAcceptance, cancellationToken, "receiver acceptance")
                     .ConfigureAwait(false);
                 if (decision == IncomingTransferDecision.Decline)
                 {
@@ -165,6 +167,28 @@ public sealed class TcpFileReceiver(DeviceInfo localDevice)
                     DeletePartial(activePartialPath);
                 }
             }
+        }
+    }
+
+    private static async Task<T> WithTimeout<T>(Task<T> task, TimeSpan timeout, CancellationToken callerToken, string phase)
+    {
+        try
+        {
+            using CancellationTokenSource timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(callerToken);
+            timeoutCts.CancelAfter(timeout);
+            return await task.WaitAsync(timeoutCts.Token).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (!callerToken.IsCancellationRequested)
+        {
+            throw new TransferFailedException(TransferFailureKind.Timeout, $"Transfer {phase} timed out.");
+        }
+        catch (OperationCanceledException)
+        {
+            throw new TransferFailedException(TransferFailureKind.Cancelled, "Transfer cancelled.");
+        }
+        catch (IOException ex)
+        {
+            throw new TransferFailedException(TransferFailureKind.Transport, $"Transport failed during {phase}.", ex);
         }
     }
 
