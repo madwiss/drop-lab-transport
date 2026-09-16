@@ -44,37 +44,34 @@ public sealed class ProviderRouteTransportFactory : IRouteTransportFactory
     }
 
     public StartedTransportListener CreateStartedListener()
+{
+    ITransportProvider provider =
+        _resolver.GetRequired("tcp-lan");
+
+    ITransportListener listener =
+        provider.CreateListener();
+
+    if (listener is not TcpTransportListener tcpListener)
     {
-        ITransportProvider provider =
-            _resolver.GetRequired("tcp-lan");
-
-        ITransportListener listener =
-            provider.CreateListener();
-
-        if (listener is not TcpTransportListener tcpListener)
-        {
-            throw new InvalidOperationException(
-                "TCP transport listener was expected.");
-        }
-
-        tcpListener.Start();
-
-    return new StartedTransportListener(
-            tcpListener,
-            tcpListener.LocalEndpoint);
+        throw new InvalidOperationException(
+            "TCP transport listener was expected.");
     }
 
-    public int GetListenerPort(ITransportEndpoint endpoint)
-{
-    ArgumentNullException.ThrowIfNull(endpoint);
-
-    return endpoint switch
-    {
-        TcpTransportEndpoint tcp => tcp.Port,
-        _ => throw new NotSupportedException(
-            "Transport endpoint does not expose a discovery port.")
-    };
+    return new StartedTransportListener(
+        tcpListener,
+        tcpListener.LocalEndpoint);
 }
+    public int GetListenerPort(ITransportEndpoint endpoint)
+    {
+        ArgumentNullException.ThrowIfNull(endpoint);
+
+        return endpoint switch
+        {
+            TcpTransportEndpoint tcp => tcp.Port,
+            _ => throw new NotSupportedException("Transport endpoint does not expose a discovery port.")
+        };
+    }
+
 private ITransportProvider ResolveProvider(
         ConnectionCandidate candidate)
     {
@@ -106,6 +103,10 @@ private ITransportProvider ResolveProvider(
         };
     }
 }
+
+
+
+
 
 
 

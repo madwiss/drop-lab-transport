@@ -23,7 +23,7 @@ public partial class MainWindow : Window
     private readonly IncomingTransferStateModel _incoming = new();
     private readonly CancellationTokenSource _lifetime = new();
     private readonly IRouteTransportFactory _transportFactory;
-    private readonly IFileTransferFactory _fileTransferFactory = new TcpFileTransferFactory();
+    private readonly IFileTransferFactory _fileTransferFactory = new TransportFileTransferFactory();
 
     private readonly TransportProviderResolver _transportResolver =
         new(DefaultTransportRegistry.Create());
@@ -292,6 +292,7 @@ public interface IRouteTransportFactory
 
 int GetListenerPort(ITransportEndpoint endpoint);
 }
+
 
 
 

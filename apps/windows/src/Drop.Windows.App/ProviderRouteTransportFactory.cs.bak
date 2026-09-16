@@ -57,7 +57,9 @@ public sealed class ProviderRouteTransportFactory : IRouteTransportFactory
                 "TCP transport listener was expected.");
         }
 
-        return new StartedTransportListener(
+        tcpListener.Start();
+
+    return new StartedTransportListener(
             tcpListener,
             tcpListener.LocalEndpoint);
     }
@@ -104,4 +106,8 @@ private ITransportProvider ResolveProvider(
         };
     }
 }
+
+
+
+
 
