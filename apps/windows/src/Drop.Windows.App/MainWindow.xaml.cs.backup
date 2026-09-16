@@ -1,4 +1,4 @@
-﻿using System.Collections.ObjectModel;
+using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
@@ -173,16 +173,15 @@ public partial class MainWindow : Window
         CancellationToken cancellationToken)
     {
         string deviceId = offer.Sender.DeviceId.ToString("D");
-string fingerprint = GetPeerFingerprint(offer.Sender);
+        string fingerprint = GetPeerFingerprint(offer.Sender);
+        if (await _peerTrust.IsTrustedAsync(deviceId, fingerprint, cancellationToken))
+        {
+            return IncomingTransferDecision.Accept;
+        }
 
-// Trust is hidden from the user experience.
-// Every transfer still requires file acceptance.
-// Trust only avoids future pairing prompts.
-
-Task<IncomingTransferDecision> decision = await Dispatcher.InvokeAsync(
-    () => _incoming.PresentAsync(offer, cancellationToken));
-
-return await decision.ConfigureAwait(false);
+        Task<IncomingTransferDecision> decision = await Dispatcher.InvokeAsync(
+            () => _incoming.PresentAsync(offer, cancellationToken));
+        return await decision.ConfigureAwait(false);
     }
 
     private static string GetPeerFingerprint(DeviceInfo device) =>
@@ -241,7 +240,7 @@ return await decision.ConfigureAwait(false);
     }
 
     private void RefreshDiscoveryText() => DiscoveryStatusText.Text = _devices.Count == 0
-        ? "Looking for devicesâ€¦"
+        ? "Looking for devices…"
         : $"{_devices.Count} device{(_devices.Count == 1 ? string.Empty : "s")} available";
 
     private void Transfer_PropertyChanged(object? sender, PropertyChangedEventArgs e) => UpdateActions();
@@ -292,8 +291,6 @@ public interface IRouteTransportFactory
 
     StartedTransportListener CreateStartedListener();
 }
-
-
 
 
 
