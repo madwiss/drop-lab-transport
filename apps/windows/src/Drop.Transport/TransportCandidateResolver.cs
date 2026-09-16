@@ -17,11 +17,14 @@ public sealed class TransportCandidateResolver
     /// <summary>
     /// Returns all available transport candidates from registered providers.
     /// </summary>
-    public IReadOnlyCollection<TransportCandidate> Resolve()
+    public IReadOnlyCollection<TransportCandidate> Resolve(
+        TransportDiscoveryContext context)
     {
+        ArgumentNullException.ThrowIfNull(context);
+
         return _registry
             .GetAvailable()
-            .SelectMany(provider => provider.DiscoverCandidates())
+            .SelectMany(provider => provider.DiscoverCandidates(context))
             .ToArray();
     }
 }

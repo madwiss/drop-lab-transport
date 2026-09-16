@@ -21,8 +21,28 @@ public sealed class TcpTransportProvider : ITransportProvider
 
     public bool IsAvailable => true;
 
-    public IReadOnlyCollection<TransportCandidate> DiscoverCandidates() =>
-        Array.Empty<TransportCandidate>();
+    public IReadOnlyCollection<TransportCandidate> DiscoverCandidates(
+        TransportDiscoveryContext context)
+    {
+        ArgumentNullException.ThrowIfNull(context);
+
+        if (!IPAddress.TryParse(context.RemoteAddress, out var address))
+        {
+            return [];
+        }
+
+        TcpTransportEndpoint endpoint =
+            new(address, context.RemotePort);
+
+        return
+        [
+            new TransportCandidate(
+                candidateId: $"tcp:{context.RemoteDeviceId}",
+                transportId: TransportId,
+                endpoint,
+                Capability)
+        ];
+    }
 
     public ITransportEndpoint CreateEndpoint(
         TransportEndpointDescriptor descriptor)
@@ -32,11 +52,13 @@ public sealed class TcpTransportProvider : ITransportProvider
         if (descriptor is not TcpTransportEndpointDescriptor tcp)
         {
             throw new ArgumentException(
-                "TCP transport requires a TCP endpoint descriptor.",
+                "TCP requires a TCP endpoint descriptor.",
                 nameof(descriptor));
         }
 
-        return new TcpTransportEndpoint(tcp.Address, tcp.Port);
+        return new TcpTransportEndpoint(
+            tcp.Address,
+            tcp.Port);
     }
 
     public ITransportConnector CreateConnector() =>

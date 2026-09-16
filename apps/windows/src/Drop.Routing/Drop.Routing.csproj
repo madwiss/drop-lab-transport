@@ -9,6 +9,7 @@
   <ItemGroup>
     <ProjectReference Include="..\Drop.Protocol\Drop.Protocol.csproj" />
     <ProjectReference Include="..\Drop.Security\Drop.Security.csproj" />
+    <ProjectReference Include="..\Drop.Transport\Drop.Transport.csproj" />
   </ItemGroup>
 
 </Project>

@@ -26,6 +26,7 @@ public partial class MainWindow : Window
 
     private readonly TransportProviderResolver _transportResolver =
         new(DefaultTransportRegistry.Create());
+    private readonly TransportRouteDiscoveryService _routeDiscovery;
     private readonly PeerTrustService _peerTrust = new(new JsonTrustedPeerStore(Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "Drop", "trusted-peers.json")));
     private ReceiverHost? _receiver;
@@ -95,7 +96,7 @@ public partial class MainWindow : Window
         SelectedTransportRoute selectedRoute;
         try
         {
-            selectedRoute = LanRouteAdapter.Select(device, _transportFactory);
+            selectedRoute = _routeDiscovery.SelectPreferred(device, _transportFactory);
         }
         catch (Exception ex)
         {
@@ -326,4 +327,6 @@ public static class LanRouteAdapter
             transportFactory.CreateConnector(candidate));
     }
 }
+
+
 
