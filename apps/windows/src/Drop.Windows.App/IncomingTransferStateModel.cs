@@ -25,6 +25,7 @@ public sealed class IncomingTransferStateModel : INotifyPropertyChanged
     private long _totalBytes;
     private string _statusText = string.Empty;
     private TaskCompletionSource<IncomingTransferDecision>? _decision;
+    private IncomingTransferOffer? _currentOffer;
 
     public event PropertyChangedEventHandler? PropertyChanged;
 
@@ -34,6 +35,7 @@ public sealed class IncomingTransferStateModel : INotifyPropertyChanged
     public long BytesReceived => _bytesReceived;
     public long TotalBytes => _totalBytes;
     public string StatusText => _statusText;
+    public IncomingTransferOffer? CurrentOffer => _currentOffer;
     public bool IsVisible => _state != IncomingTransferState.Idle;
     public bool CanDecide => _state == IncomingTransferState.IncomingOffer;
     public double ProgressPercent => _totalBytes == 0
@@ -52,6 +54,7 @@ public sealed class IncomingTransferStateModel : INotifyPropertyChanged
         }
 
         _senderName = offer.Sender.Name;
+        _currentOffer = offer;
         _fileName = offer.FileName;
         _bytesReceived = 0;
         _totalBytes = offer.FileSize;
@@ -73,6 +76,8 @@ public sealed class IncomingTransferStateModel : INotifyPropertyChanged
         SetState(IncomingTransferState.Receiving, "Receiving…");
         decision.TrySetResult(IncomingTransferDecision.Accept);
     }
+
+    public void ResetOffer() => _currentOffer = null;
 
     public void Decline()
     {

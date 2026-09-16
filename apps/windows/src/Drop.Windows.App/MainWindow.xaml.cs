@@ -8,6 +8,7 @@ using System.Windows.Controls;
 using Drop.Discovery;
 using Drop.Protocol;
 using Drop.Routing;
+using Drop.Security;
 using Drop.Transport;
 using Microsoft.Win32;
 
@@ -22,6 +23,8 @@ public partial class MainWindow : Window
     private readonly IncomingTransferStateModel _incoming = new();
     private readonly CancellationTokenSource _lifetime = new();
     private readonly IRouteTransportFactory _transportFactory = new LanTcpRouteTransportFactory();
+    private readonly PeerTrustService _peerTrust = new(new JsonTrustedPeerStore(Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "Drop", "trusted-peers.json")));
     private ReceiverHost? _receiver;
     private DeviceInfo? _localDevice;
     private CancellationTokenSource? _sendCancellation;
@@ -45,7 +48,7 @@ public partial class MainWindow : Window
         try
         {
             Guid deviceId = LocalDeviceIdentity.LoadOrCreate();
-            _localDevice = new DeviceInfo(deviceId, Environment.MachineName, "windows", AppVersion);
+            _localDevice = new DeviceInfo(deviceId, Environment.MachineName, "windows", AppVersion, deviceId.ToString("D"));
             Progress<FileTransferProgress> receiveProgress = new(_incoming.ReportProgress);
             _receiver = new ReceiverHost(
                 _localDevice,
@@ -141,7 +144,19 @@ public partial class MainWindow : Window
 
     private void CancelButton_Click(object sender, RoutedEventArgs e) => _sendCancellation?.Cancel();
 
-    private void AcceptIncomingButton_Click(object sender, RoutedEventArgs e) => _incoming.Accept();
+    private async void AcceptIncomingButton_Click(object sender, RoutedEventArgs e)
+    {
+        IncomingTransferOffer? offer = _incoming.CurrentOffer;
+        _incoming.Accept();
+
+        if (offer is not null)
+        {
+            await _peerTrust.TrustAfterAcceptedAsync(
+                offer.Sender.DeviceId.ToString("D"),
+                GetPeerFingerprint(offer.Sender),
+                offer.Sender.Name);
+        }
+    }
 
     private void DeclineIncomingButton_Click(object sender, RoutedEventArgs e) => _incoming.Decline();
 
@@ -149,10 +164,22 @@ public partial class MainWindow : Window
         IncomingTransferOffer offer,
         CancellationToken cancellationToken)
     {
+        string deviceId = offer.Sender.DeviceId.ToString("D");
+        string fingerprint = GetPeerFingerprint(offer.Sender);
+        if (await _peerTrust.IsTrustedAsync(deviceId, fingerprint, cancellationToken))
+        {
+            return IncomingTransferDecision.Accept;
+        }
+
         Task<IncomingTransferDecision> decision = await Dispatcher.InvokeAsync(
             () => _incoming.PresentAsync(offer, cancellationToken));
         return await decision.ConfigureAwait(false);
     }
+
+    private static string GetPeerFingerprint(DeviceInfo device) =>
+        !string.IsNullOrWhiteSpace(device.Fingerprint)
+            ? device.Fingerprint
+            : device.DeviceId.ToString("D");
 
     private void Receiver_SessionEnded(object? sender, ReceiveSessionResult result) =>
         Dispatcher.InvokeAsync(() =>

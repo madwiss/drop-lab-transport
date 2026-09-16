@@ -7,4 +7,5 @@ public sealed record DeviceInfo(
     Guid DeviceId,
     string Name,
     string Platform,
-    string AppVersion);
+    string AppVersion,
+    string? Fingerprint = null);
