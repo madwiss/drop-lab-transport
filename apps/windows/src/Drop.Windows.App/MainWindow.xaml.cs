@@ -36,6 +36,8 @@ public partial class MainWindow : Window
     public MainWindow()
 {
     _transportFactory = new ProviderRouteTransportFactory(_transportResolver);
+    _routeDiscovery = new TransportRouteDiscoveryService(
+        new TransportCandidateResolver(DefaultTransportRegistry.Create()));
 
     InitializeComponent();
     DataContext = new { Transfer = _transfer, Incoming = _incoming };
@@ -290,43 +292,9 @@ public interface IRouteTransportFactory
     StartedTransportListener CreateStartedListener();
 }
 
-public static class LanRouteAdapter
-{
-    private const RouteCapabilities LanCapabilities =
-        RouteCapabilities.Reliable |
-        RouteCapabilities.Ordered |
-        RouteCapabilities.Bidirectional |
-        RouteCapabilities.SupportsLargeTransfers;
 
-    public static PeerRoutes ToPeerRoutes(DiscoveredDevice device)
-    {
-        ArgumentNullException.ThrowIfNull(device);
-        ConnectionCandidate candidate = new(
-            $"lan:{device.DeviceId:D}",
-            RouteKind.LocalLan,
-            TransportKind.ReliableByteStream,
-            LanCapabilities,
-            CandidateAvailability.Reachable);
-        return new PeerRoutes(device.DeviceId.ToString("D"), [candidate]);
-    }
 
-    public static SelectedTransportRoute Select(
-        DiscoveredDevice device,
-        IRouteTransportFactory transportFactory)
-    {
-        ArgumentNullException.ThrowIfNull(device);
-        ArgumentNullException.ThrowIfNull(transportFactory);
 
-        PeerRoutes routes = ToPeerRoutes(device);
-        ConnectionCandidate candidate = RouteSelector.SelectPreferred(routes, LanCapabilities)
-            ?? throw new InvalidOperationException("No eligible route is available for this device.");
-
-        return new SelectedTransportRoute(
-            candidate,
-            transportFactory.CreateEndpoint(candidate, device),
-            transportFactory.CreateConnector(candidate));
-    }
-}
 
 
 
