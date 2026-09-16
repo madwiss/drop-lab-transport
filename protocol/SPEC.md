@@ -17,6 +17,17 @@ network.
 Future transports may include direct peer-to-peer mechanisms without
 changing the logical transfer protocol.
 
+Connection timeout and retry assumptions:
+
+- implementations must enforce bounded connection and session inactivity
+  timeouts
+- a retry must not automatically replay payload bytes when the previous
+  delivery outcome is unknown
+- a new transfer attempt must establish a new valid session state
+
+These rules clarify implementation behavior and do not change the Protocol
+v1 wire format.
+
 2. Core requirements
 
 The protocol must support:

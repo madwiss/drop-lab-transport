@@ -120,6 +120,41 @@ For MVP: - TCP over LAN is the preferred baseline
 
 Future transports may implement the same contract.
 
+Remote connectivity foundation
+
+The connection model keeps routing, transport, and authentication
+boundaries separate:
+
+- Discovery finds possible nearby peers and supplies identifiers and
+  connection hints.
+- Routing selects how a session reaches a peer and owns connection state,
+  retries, and recovery decisions.
+- Transport opens a byte channel. The current implementation uses TCP on
+  the LAN.
+- Transfer protocol handles Drop messages and file integrity.
+- Identity/authentication verifies cryptographic peer identity when an
+  authenticated session is required.
+- Application UI consumes session state without depending on discovery or
+  transport details.
+
+mDNS device IDs and other discovery identifiers are presence identifiers.
+They are not cryptographic identities and must never be used as proof of
+peer authenticity.
+
+Future internet connectivity can add new routing and transport
+implementations behind these boundaries. The architecture does not require
+or select a cloud backend, relay provider, or vendor service.
+
+Session recovery rules
+
+Connection attempts and inactive sessions must have explicit timeout
+boundaries. Retry decisions belong to the routing/session layer and must not
+silently duplicate a transfer.
+
+Automatic retry must never replay an unsafe payload after uncertainty about
+whether the receiver accepted or persisted file bytes. A new transfer attempt
+requires a new verified session state.
+
 Transfer protocol
 
 The Drop protocol is application-level and transport-independent.

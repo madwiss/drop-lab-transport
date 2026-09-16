@@ -79,6 +79,25 @@ Completed
 
 In progress
 
+Remote connectivity foundation
+
+Completed foundations:
+
+- transport-neutral routing/session concepts are documented
+- discovery identifiers are separated from cryptographic peer identity
+- authenticated-session boundaries are defined independently from Protocol v1
+- timeout, retry, and recovery rules are documented for future connection work
+- future internet transports can be added behind replaceable routing and
+  transport boundaries
+
+Deferred:
+
+- internet rendezvous services
+- NAT traversal
+- relay infrastructure
+- production remote transport implementations
+- Protocol v1 wire changes for remote connectivity
+
 -   no implementation task is currently in progress
 
 Not started
