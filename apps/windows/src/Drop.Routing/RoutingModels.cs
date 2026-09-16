@@ -33,6 +33,12 @@ public enum CandidateAvailability
     Unavailable = 2
 }
 
+public enum RouteFailureKind
+{
+    Unknown = 0,
+    Transient = 1
+}
+
 public sealed record ConnectionCandidate
 {
     private const RouteCapabilities KnownCapabilities =

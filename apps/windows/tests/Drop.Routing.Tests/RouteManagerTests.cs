@@ -27,6 +27,28 @@ public sealed class RouteManagerTests
     }
 
     [TestMethod]
+    public void SelectFallbackRouteReturnsAlternativeAfterTransientFailure()
+    {
+        RouteManager manager = new();
+        PeerRoutes peer = new("peer", [Candidate("failed", RouteKind.LocalLan), Candidate("fallback", RouteKind.RemoteDirect)]);
+
+        Assert.AreEqual("fallback", manager.SelectFallbackRoute(peer, peer.Candidates[0], RouteFailureKind.Transient, Reliable)?.CandidateId);
+    }
+
+    [TestMethod]
+    public void SelectFallbackRouteSkipsUnavailableRoutes()
+    {
+        RouteManager manager = new();
+        PeerRoutes peer = new("peer", [
+            Candidate("failed", RouteKind.LocalLan),
+            new ConnectionCandidate("unavailable", RouteKind.RemoteDirect, TransportKind.ReliableByteStream, Reliable, CandidateAvailability.Unavailable),
+            Candidate("usable", RouteKind.RemoteDirect)
+        ]);
+
+        Assert.AreEqual("usable", manager.SelectFallbackRoute(peer, peer.Candidates[0], RouteFailureKind.Transient, Reliable)?.CandidateId);
+    }
+
+    [TestMethod]
     public void IncompatibleRoutesAreRejected()
     {
         RouteManager manager = new();

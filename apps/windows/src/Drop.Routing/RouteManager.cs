@@ -30,4 +30,20 @@ public sealed class RouteManager
         ConnectionCandidate failedCandidate,
         RouteCapabilities requiredCapabilities = RouteCapabilities.None) =>
         fallbackHandler.GetFallbackCandidates(peer, failedCandidate, requiredCapabilities);
+
+    public ConnectionCandidate? SelectFallbackRoute(
+        PeerRoutes peer,
+        ConnectionCandidate failedCandidate,
+        RouteFailureKind failureKind,
+        RouteCapabilities requiredCapabilities = RouteCapabilities.None)
+    {
+        ArgumentNullException.ThrowIfNull(peer);
+        ArgumentNullException.ThrowIfNull(failedCandidate);
+
+        if (failureKind != RouteFailureKind.Transient)
+            return null;
+
+        return fallbackHandler.GetFallbackCandidates(peer, failedCandidate, requiredCapabilities)
+            .FirstOrDefault();
+    }
 }
