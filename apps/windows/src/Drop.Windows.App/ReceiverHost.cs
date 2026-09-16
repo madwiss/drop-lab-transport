@@ -1,4 +1,4 @@
-using System.IO;
+﻿using System.IO;
 using System.Collections.Concurrent;
 using Drop.Protocol;
 using Drop.Transport;
@@ -9,7 +9,8 @@ internal sealed class ReceiverHost(
     DeviceInfo localDevice,
     Func<IncomingTransferOffer, CancellationToken, ValueTask<IncomingTransferDecision>> decide,
     IProgress<FileTransferProgress> progress,
-    Func<StartedTransportListener> createListener) : IAsyncDisposable
+    Func<StartedTransportListener> createListener,
+   Func<IFileReceiver> createReceiver) : IAsyncDisposable
 {
     private readonly CancellationTokenSource _cancellation = new();
     private readonly ConcurrentDictionary<int, Task> _sessions = new();
@@ -77,8 +78,8 @@ internal sealed class ReceiverHost(
         {
             await _sessionGate.WaitAsync(cancellationToken).ConfigureAwait(false);
             enteredGate = true;
-            ReceiveSessionResult result = await new TcpFileReceiver(localDevice)
-                .ReceiveAsync(connection, destination, decide, progress, cancellationToken)
+            ReceiveSessionResult result = await createReceiver()
+               .ReceiveAsync(connection, destination, decide, progress, cancellationToken)
                 .ConfigureAwait(false);
             SessionEnded?.Invoke(this, result);
         }
@@ -95,3 +96,6 @@ internal sealed class ReceiverHost(
         }
     }
 }
+
+
+

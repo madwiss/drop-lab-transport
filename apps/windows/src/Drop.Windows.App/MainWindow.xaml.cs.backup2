@@ -23,7 +23,6 @@ public partial class MainWindow : Window
     private readonly IncomingTransferStateModel _incoming = new();
     private readonly CancellationTokenSource _lifetime = new();
     private readonly IRouteTransportFactory _transportFactory;
-    private readonly IFileTransferFactory _fileTransferFactory = new TcpFileTransferFactory();
 
     private readonly TransportProviderResolver _transportResolver =
         new(DefaultTransportRegistry.Create());
@@ -63,12 +62,15 @@ public partial class MainWindow : Window
                 _localDevice,
                 DecideIncomingAsync,
                 receiveProgress,
-                _transportFactory.CreateStartedListener,
-                () => _fileTransferFactory.CreateReceiver(_localDevice));
+                _transportFactory.CreateStartedListener);
             _receiver.SessionEnded += Receiver_SessionEnded;
             _receiver.SessionFailed += Receiver_SessionFailed;
             ITransportEndpoint listenerEndpoint = _receiver.Start();
-            int port = _transportFactory.GetListenerPort(listenerEndpoint);
+            if (listenerEndpoint is not TcpTransportEndpoint tcpListenerEndpoint)
+            {
+                throw new NotSupportedException("The LAN discovery advertisement requires a TCP listener endpoint.");
+            }
+            int port = tcpListenerEndpoint.Port;
             await _discovery.StartAsync(new DropAdvertisement(
                 deviceId, _localDevice.Name, _localDevice.Platform, 1, AppVersion, port), _lifetime.Token);
             RefreshDiscoveryText();
@@ -118,7 +120,7 @@ public partial class MainWindow : Window
         {
             Progress<FileTransferProgress> progress = new(_transfer.ReportProgress);
             Progress<SendStage> stages = new(_transfer.ReportStage);
-            IFileSender senderCore = _fileTransferFactory.CreateSender(_localDevice, selectedRoute.Connector);
+            TcpFileSender senderCore = new(_localDevice, selectedRoute.Connector);
             await senderCore.SendAsync(
                 selectedRoute.Endpoint, file.FullName, file.Name,
                 progress, _sendCancellation.Token, stages);
@@ -289,19 +291,7 @@ public interface IRouteTransportFactory
     ITransportEndpoint CreateEndpoint(ConnectionCandidate candidate, DiscoveredDevice device);
 
     StartedTransportListener CreateStartedListener();
-
-int GetListenerPort(ITransportEndpoint endpoint);
 }
-
-
-
-
-
-
-
-
-
-
 
 
 

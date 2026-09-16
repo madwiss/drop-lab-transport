@@ -1,4 +1,4 @@
-using System.Buffers;
+﻿using System.Buffers;
 using System.Security.Cryptography;
 using System.Text.Json;
 using Drop.Transport;
@@ -8,7 +8,7 @@ namespace Drop.Protocol;
 /// <summary>
 /// Receives one Protocol v1 file-transfer session over an established reliable byte stream.
 /// </summary>
-public sealed class TcpFileReceiver(DeviceInfo localDevice)
+public sealed class TcpFileReceiver(DeviceInfo localDevice) : IFileReceiver
 {
     private const int BufferSize = 128 * 1024;
 
@@ -379,3 +379,4 @@ public sealed class TcpFileReceiver(DeviceInfo localDevice)
 
     private sealed record OfferedFile(Guid FileId, string Name, long Size);
 }
+

@@ -1,4 +1,4 @@
-using Drop.Discovery;
+﻿using Drop.Discovery;
 using Drop.Routing;
 using Drop.Transport;
 
@@ -62,7 +62,18 @@ public sealed class ProviderRouteTransportFactory : IRouteTransportFactory
             tcpListener.LocalEndpoint);
     }
 
-    private ITransportProvider ResolveProvider(
+    public int GetListenerPort(ITransportEndpoint endpoint)
+{
+    ArgumentNullException.ThrowIfNull(endpoint);
+
+    return endpoint switch
+    {
+        TcpTransportEndpoint tcp => tcp.Port,
+        _ => throw new NotSupportedException(
+            "Transport endpoint does not expose a discovery port.")
+    };
+}
+private ITransportProvider ResolveProvider(
         ConnectionCandidate candidate)
     {
         return candidate.TransportKind switch
@@ -93,3 +104,4 @@ public sealed class ProviderRouteTransportFactory : IRouteTransportFactory
         };
     }
 }
+

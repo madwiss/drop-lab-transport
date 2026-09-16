@@ -5,7 +5,7 @@ using Drop.Transport;
 
 namespace Drop.Protocol;
 
-public sealed class TcpFileSender(DeviceInfo localDevice, ITransportConnector connector)
+public sealed class TcpFileSender(DeviceInfo localDevice, ITransportConnector connector) : IFileSender
 {
     private const int BufferSize = 128 * 1024;
 
@@ -134,3 +134,4 @@ public sealed class TcpFileSender(DeviceInfo localDevice, ITransportConnector co
 
     private static object DeviceJson(DeviceInfo device) => new { deviceId = device.DeviceId, name = device.Name, platform = device.Platform, appVersion = device.AppVersion, protocolVersion = ProtocolMessage.Version };
 }
+
