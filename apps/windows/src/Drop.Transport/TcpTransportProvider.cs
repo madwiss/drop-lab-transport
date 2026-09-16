@@ -19,6 +19,9 @@ public sealed class TcpTransportProvider : ITransportProvider
 
     public bool IsAvailable => true;
 
+    public IReadOnlyCollection<TransportCandidate> DiscoverCandidates() =>
+        Array.Empty<TransportCandidate>();
+
     public ITransportConnector CreateConnector() =>
         new TcpTransportConnector();
 
