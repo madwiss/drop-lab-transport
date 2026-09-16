@@ -21,7 +21,11 @@ public interface ITransportProvider
     /// </summary>
     bool IsAvailable { get; }
 
-    IReadOnlyCollection<TransportCandidate> DiscoverCandidates();
+    /// <summary>
+    /// Creates a transport endpoint from transport-specific information.
+    /// </summary>
+    ITransportEndpoint CreateEndpoint(
+        TransportEndpointDescriptor descriptor);
 
     /// <summary>
     /// Creates a connector for outbound connections.
@@ -32,4 +36,9 @@ public interface ITransportProvider
     /// Creates a listener for inbound connections.
     /// </summary>
     ITransportListener CreateListener();
+
+    /// <summary>
+    /// Returns transport candidates currently available.
+    /// </summary>
+    IReadOnlyCollection<TransportCandidate> DiscoverCandidates();
 }
