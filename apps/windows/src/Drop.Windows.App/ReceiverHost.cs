@@ -1,4 +1,3 @@
-using System.Net;
 using System.IO;
 using System.Collections.Concurrent;
 using Drop.Protocol;
@@ -9,24 +8,25 @@ namespace Drop.Windows;
 internal sealed class ReceiverHost(
     DeviceInfo localDevice,
     Func<IncomingTransferOffer, CancellationToken, ValueTask<IncomingTransferDecision>> decide,
-    IProgress<FileTransferProgress> progress) : IAsyncDisposable
+    IProgress<FileTransferProgress> progress,
+    Func<StartedTransportListener> createListener) : IAsyncDisposable
 {
     private readonly CancellationTokenSource _cancellation = new();
     private readonly ConcurrentDictionary<int, Task> _sessions = new();
     private readonly SemaphoreSlim _sessionGate = new(1, 1);
-    private TcpTransportListener? _listener;
+    private ITransportListener? _listener;
     private Task? _acceptLoop;
     private int _nextSessionId;
 
     public event EventHandler<ReceiveSessionResult>? SessionEnded;
     public event EventHandler<Exception>? SessionFailed;
 
-    public int Start()
+    public ITransportEndpoint Start()
     {
-        _listener = new TcpTransportListener(IPAddress.IPv6Any, 0, dualMode: true);
-        _listener.Start();
+        StartedTransportListener startedListener = createListener();
+        _listener = startedListener.Listener;
         _acceptLoop = AcceptLoopAsync(_listener, _cancellation.Token);
-        return _listener.LocalEndpoint.Port;
+        return startedListener.LocalEndpoint;
     }
 
     public async ValueTask DisposeAsync()
@@ -43,7 +43,7 @@ internal sealed class ReceiverHost(
         _cancellation.Dispose();
     }
 
-    private async Task AcceptLoopAsync(TcpTransportListener listener, CancellationToken cancellationToken)
+    private async Task AcceptLoopAsync(ITransportListener listener, CancellationToken cancellationToken)
     {
         while (!cancellationToken.IsCancellationRequested)
         {

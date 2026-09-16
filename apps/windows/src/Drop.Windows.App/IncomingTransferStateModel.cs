@@ -1,6 +1,7 @@
 using System.ComponentModel;
 using System.Runtime.CompilerServices;
 using Drop.Protocol;
+using Drop.Routing;
 
 namespace Drop.Windows;
 
@@ -99,6 +100,26 @@ public sealed class IncomingTransferStateModel : INotifyPropertyChanged
 
     public void Fail(string message) =>
         SetState(IncomingTransferState.Failed, $"Failed: {message}");
+
+    public void Fail(ConnectionFailure failure)
+    {
+        ArgumentNullException.ThrowIfNull(failure);
+        if (failure.Kind == ConnectionFailureKind.Cancelled)
+        {
+            Cancel();
+            return;
+        }
+
+        string message = failure.Kind switch
+        {
+            ConnectionFailureKind.ConnectionTimeout => "Transfer timed out.",
+            ConnectionFailureKind.TransportInterrupted => "The connection was interrupted.",
+            ConnectionFailureKind.ProtocolError => "The transfer protocol failed.",
+            ConnectionFailureKind.RetryExhausted => "The connection failed after retrying.",
+            _ => failure.Diagnostic ?? "Transfer failed."
+        };
+        Fail(message);
+    }
 
     public void Cancel() => SetState(IncomingTransferState.Cancelled, "Cancelled");
 

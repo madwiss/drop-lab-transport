@@ -1,6 +1,7 @@
 using System.ComponentModel;
 using System.Runtime.CompilerServices;
 using Drop.Protocol;
+using Drop.Routing;
 
 namespace Drop.Windows;
 
@@ -87,6 +88,31 @@ public sealed class TransferStateModel : INotifyPropertyChanged
 
     public void Fail(string message) =>
         SetState(TransferState.Failed, $"Failed: {message}");
+
+    public void Fail(ConnectionFailure failure)
+    {
+        ArgumentNullException.ThrowIfNull(failure);
+        if (failure.Kind == ConnectionFailureKind.Cancelled)
+        {
+            Cancel();
+            return;
+        }
+
+        string message = failure.Kind switch
+        {
+            ConnectionFailureKind.NoEligibleRoute => "No available route to this device.",
+            ConnectionFailureKind.RouteUnavailable => "The selected route is unavailable.",
+            ConnectionFailureKind.UnsupportedTransport => "This connection method is not supported.",
+            ConnectionFailureKind.ConnectionTimeout => "Connection timed out.",
+            ConnectionFailureKind.ConnectionRefused => "The device refused the connection.",
+            ConnectionFailureKind.AuthenticationFailed => "Device authentication failed.",
+            ConnectionFailureKind.TransportInterrupted => "The connection was interrupted.",
+            ConnectionFailureKind.ProtocolError => "The transfer protocol failed.",
+            ConnectionFailureKind.RetryExhausted => "Could not connect after retrying.",
+            _ => failure.Diagnostic ?? "Connection failed."
+        };
+        Fail(message);
+    }
 
     public void Cancel() => SetState(TransferState.Cancelled, "Cancelled");
 

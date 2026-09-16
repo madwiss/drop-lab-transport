@@ -1,4 +1,5 @@
 using Drop.Protocol;
+using Drop.Routing;
 
 namespace Drop.Windows.App.Tests;
 
@@ -65,6 +66,33 @@ public sealed class TransferStateModelTests
         StringAssert.Contains(model.StatusText, "Device unavailable");
         Assert.IsFalse(model.IsBusy);
     }
+
+    [TestMethod]
+    [DataRow(ConnectionFailureKind.ConnectionTimeout, "Connection timed out.")]
+    [DataRow(ConnectionFailureKind.TransportInterrupted, "The connection was interrupted.")]
+    [DataRow(ConnectionFailureKind.RetryExhausted, "Could not connect after retrying.")]
+    public void RoutingFailuresMapToStableSendMessages(ConnectionFailureKind kind, string expected)
+    {
+        TransferStateModel model = new();
+        model.Begin("one.bin", 1);
+
+        model.Fail(new ConnectionFailure(kind, IsRetryable: false, "internal diagnostic"));
+
+        Assert.AreEqual(TransferState.Failed, model.State);
+        Assert.AreEqual($"Failed: {expected}", model.StatusText);
+    }
+
+    [TestMethod]
+    public void RoutingCancellationMapsToCancelledState()
+    {
+        TransferStateModel model = new();
+        model.Begin("one.bin", 1);
+
+        model.Fail(new ConnectionFailure(ConnectionFailureKind.Cancelled, IsRetryable: false));
+
+        Assert.AreEqual(TransferState.Cancelled, model.State);
+        Assert.AreEqual("Cancelled", model.StatusText);
+    }
 }
 
 [TestClass]
@@ -106,5 +134,19 @@ public sealed class IncomingTransferStateModelTests
         Assert.AreEqual(IncomingTransferDecision.Decline, await decision);
         Assert.AreEqual(IncomingTransferState.Declined, model.State);
         Assert.IsFalse(model.CanDecide);
+    }
+
+    [TestMethod]
+    [DataRow(ConnectionFailureKind.ConnectionTimeout, "Transfer timed out.")]
+    [DataRow(ConnectionFailureKind.TransportInterrupted, "The connection was interrupted.")]
+    [DataRow(ConnectionFailureKind.RetryExhausted, "The connection failed after retrying.")]
+    public void RoutingFailuresMapToStableReceiveMessages(ConnectionFailureKind kind, string expected)
+    {
+        IncomingTransferStateModel model = new();
+
+        model.Fail(new ConnectionFailure(kind, IsRetryable: false, "internal diagnostic"));
+
+        Assert.AreEqual(IncomingTransferState.Failed, model.State);
+        Assert.AreEqual($"Failed: {expected}", model.StatusText);
     }
 }
