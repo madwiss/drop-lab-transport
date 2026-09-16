@@ -22,7 +22,10 @@ public partial class MainWindow : Window
     private readonly TransferStateModel _transfer = new();
     private readonly IncomingTransferStateModel _incoming = new();
     private readonly CancellationTokenSource _lifetime = new();
-    private readonly IRouteTransportFactory _transportFactory = new LanTcpRouteTransportFactory();
+    private readonly IRouteTransportFactory _transportFactory;
+
+    private readonly TransportProviderResolver _transportResolver =
+        new(DefaultTransportRegistry.Create());
     private readonly PeerTrustService _peerTrust = new(new JsonTrustedPeerStore(Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "Drop", "trusted-peers.json")));
     private ReceiverHost? _receiver;
@@ -30,18 +33,20 @@ public partial class MainWindow : Window
     private CancellationTokenSource? _sendCancellation;
 
     public MainWindow()
-    {
-        InitializeComponent();
-        DataContext = new { Transfer = _transfer, Incoming = _incoming };
-        DeviceList.ItemsSource = _devices;
-        _transfer.PropertyChanged += Transfer_PropertyChanged;
-        _discovery.DeviceAppeared += Discovery_DeviceAppeared;
-        _discovery.DeviceUpdated += Discovery_DeviceUpdated;
-        _discovery.DeviceDisappeared += Discovery_DeviceDisappeared;
-        Loaded += MainWindow_Loaded;
-        Closing += MainWindow_Closing;
-        Closed += MainWindow_Closed;
-    }
+{
+    _transportFactory = new ProviderRouteTransportFactory(_transportResolver);
+
+    InitializeComponent();
+    DataContext = new { Transfer = _transfer, Incoming = _incoming };
+    DeviceList.ItemsSource = _devices;
+    _transfer.PropertyChanged += Transfer_PropertyChanged;
+    _discovery.DeviceAppeared += Discovery_DeviceAppeared;
+    _discovery.DeviceUpdated += Discovery_DeviceUpdated;
+    _discovery.DeviceDisappeared += Discovery_DeviceDisappeared;
+    Loaded += MainWindow_Loaded;
+    Closing += MainWindow_Closing;
+    Closed += MainWindow_Closed;
+}
 
     private async void MainWindow_Loaded(object sender, RoutedEventArgs e)
     {
