@@ -21,6 +21,8 @@ public interface ITransportProvider
     /// </summary>
     bool IsAvailable { get; }
 
+    IReadOnlyCollection<TransportCandidate> DiscoverCandidates();
+
     /// <summary>
     /// Creates a connector for outbound connections.
     /// </summary>
