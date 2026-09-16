@@ -28,6 +28,20 @@ These layers must remain conceptually separate.
 The transfer protocol must not depend on one specific discovery or
 transport technology.
 
+Trust model
+
+Drop separates three different identities and states:
+
+- discovery identity: information used to find nearby devices, such as device identifiers advertised during discovery
+- session identity: the cryptographically verified identity associated with an authenticated session
+- local trust state: a local record that allows a previously accepted peer identity to be recognized as trusted
+
+The first trust flow uses the existing manual accept step as the point where a user can establish trust. After acceptance, the peer fingerprint and device identity can be stored locally and associated with a trusted record.
+
+Trust records are local application state. They do not require cloud services, accounts, QR codes, or a separate pairing ceremony.
+
+The trust layer remains independent from discovery and transport. A discovered device is not trusted automatically, and Protocol v1 LAN compatibility is preserved while trust-aware flows are introduced.
+
 Platform applications
 
 Windows

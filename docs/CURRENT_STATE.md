@@ -76,6 +76,12 @@ Completed
 -   regression tests cover selecting `192.168.0.139` over `172.27.112.1` for a sender on `192.168.0.0/24` and retaining private-IPv4/IPv6 fallback behavior
 -   2026-09-09 full Windows Release build: succeeded with 0 errors; package-vulnerability audit emitted 5 warnings because the NuGet service index was unavailable
 -   2026-09-09 all automated tests after the endpoint fix: 40 passed, 0 failed, 0 skipped
+-   local trust flow foundation completed: a manually accepted incoming transfer can establish a trusted peer relationship for future sessions
+-   trusted peer state is stored locally and associates a peer device identity fingerprint with the local trust record
+-   discovery identity, authenticated session identity, and local trust state remain separate concepts; discovery metadata alone does not create trust
+-   manual accept remains the user-controlled trust boundary for the current flow
+-   no QR pairing, cloud account pairing, or separate pairing workflow has been introduced
+-   Protocol v1 LAN transfers remain compatible and continue to operate with the existing transfer flow
 
 In progress
 
