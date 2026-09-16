@@ -289,40 +289,6 @@ public interface IRouteTransportFactory
     StartedTransportListener CreateStartedListener();
 }
 
-public sealed class LanTcpRouteTransportFactory : IRouteTransportFactory
-{
-    public ITransportConnector CreateConnector(ConnectionCandidate candidate)
-    {
-        EnsureLanReliableStream(candidate);
-        return new TcpTransportConnector();
-    }
-
-    public ITransportEndpoint CreateEndpoint(ConnectionCandidate candidate, DiscoveredDevice device)
-    {
-        ArgumentNullException.ThrowIfNull(device);
-        EnsureLanReliableStream(candidate);
-        return new TcpTransportEndpoint(device.Address, device.Port);
-    }
-
-    public StartedTransportListener CreateStartedListener()
-    {
-        TcpTransportListener listener = new(IPAddress.IPv6Any, 0, dualMode: true);
-        listener.Start();
-        return new StartedTransportListener(listener, listener.LocalEndpoint);
-    }
-
-    private static void EnsureLanReliableStream(ConnectionCandidate candidate)
-    {
-        ArgumentNullException.ThrowIfNull(candidate);
-        if (candidate.RouteKind != RouteKind.LocalLan ||
-            candidate.TransportKind != TransportKind.ReliableByteStream)
-        {
-            throw new NotSupportedException(
-                $"Route '{candidate.CandidateId}' is not supported by the LAN TCP transport adapter.");
-        }
-    }
-}
-
 public static class LanRouteAdapter
 {
     private const RouteCapabilities LanCapabilities =
@@ -360,3 +326,4 @@ public static class LanRouteAdapter
             transportFactory.CreateConnector(candidate));
     }
 }
+
