@@ -1,4 +1,4 @@
-﻿namespace Drop.Transport;
+namespace Drop.Transport;
 
 /// <summary>
 /// Resolves transport providers from a registry.
@@ -21,21 +21,5 @@ public sealed class TransportProviderResolver
         return _registry.Get(transportId)
             ?? throw new InvalidOperationException(
                 $"No transport provider registered with id '{transportId}'.");
-    }
-
-    public ITransportProvider GetBestAvailable()
-    {
-        ITransportProvider[] providers = _registry.GetAvailable().ToArray();
-
-        if (providers.Length == 0)
-        {
-            throw new InvalidOperationException(
-                "No available transport providers registered.");
-        }
-
-        return providers
-            .OrderByDescending(provider => provider.Capability.SpeedScore)
-            .ThenByDescending(provider => provider.Capability.SecurityScore)
-            .First();
     }
 }
