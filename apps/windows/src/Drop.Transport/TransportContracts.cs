@@ -17,7 +17,10 @@ public sealed class TransportFailureException : IOException
 /// <summary>
 /// Marker for an address understood by a concrete transport adapter.
 /// </summary>
-public interface ITransportEndpoint;
+public interface ITransportEndpoint
+{
+    int DiscoveryPort { get; }
+}
 
 /// <summary>
 /// An established reliable, ordered, bidirectional byte stream.
@@ -46,5 +49,6 @@ public interface ITransportListener : IAsyncDisposable
 
     ValueTask<IReliableByteStream> AcceptAsync(CancellationToken cancellationToken = default);
 }
+
 
 

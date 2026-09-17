@@ -1,4 +1,4 @@
-using System.Buffers.Binary;
+﻿using System.Buffers.Binary;
 using System.Text.Json;
 using Drop.Transport;
 
@@ -148,6 +148,7 @@ public sealed class TimeoutRecoveryTests
 
     private sealed class DummyEndpoint : ITransportEndpoint
     {
+        public int DiscoveryPort => 0;
         public static DummyEndpoint Instance { get; } = new();
     }
 
@@ -310,3 +311,4 @@ public sealed class TimeoutRecoveryTests
         public void Dispose() => File.Delete(Path);
     }
 }
+

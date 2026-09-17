@@ -1,4 +1,4 @@
-namespace Drop.Transport;
+﻿namespace Drop.Transport;
 
 public enum TransportFailureKind
 {
@@ -42,5 +42,9 @@ public interface ITransportConnector
 /// </summary>
 public interface ITransportListener : IAsyncDisposable
 {
+    ITransportEndpoint LocalEndpoint { get; }
+
     ValueTask<IReliableByteStream> AcceptAsync(CancellationToken cancellationToken = default);
 }
+
+

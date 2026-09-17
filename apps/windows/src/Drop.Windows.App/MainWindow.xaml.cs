@@ -68,7 +68,7 @@ public partial class MainWindow : Window
             _receiver.SessionEnded += Receiver_SessionEnded;
             _receiver.SessionFailed += Receiver_SessionFailed;
             ITransportEndpoint listenerEndpoint = _receiver.Start();
-            int port = _transportFactory.GetListenerPort(listenerEndpoint);
+            int port = listenerEndpoint.DiscoveryPort;
             await _discovery.StartAsync(new DropAdvertisement(
                 deviceId, _localDevice.Name, _localDevice.Platform, 1, AppVersion, port), _lifetime.Token);
             RefreshDiscoveryText();
@@ -289,9 +289,11 @@ public interface IRouteTransportFactory
     ITransportEndpoint CreateEndpoint(ConnectionCandidate candidate, DiscoveredDevice device);
 
     StartedTransportListener CreateStartedListener();
-
-int GetListenerPort(ITransportEndpoint endpoint);
 }
+
+
+
+
 
 
 

@@ -11,6 +11,8 @@ public sealed record TcpTransportEndpoint(IPAddress Address, int Port) : ITransp
     {
     }
 
+    public int DiscoveryPort => Port;
+
     public IPEndPoint ToIPEndPoint() => new(Address, Port);
 
     public override string ToString() => ToIPEndPoint().ToString();
@@ -122,4 +124,5 @@ internal sealed class TcpReliableByteStream(TcpClient client) : IReliableByteStr
         _client.Dispose();
     }
 }
+
 
