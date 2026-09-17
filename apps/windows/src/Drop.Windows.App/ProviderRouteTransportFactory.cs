@@ -51,15 +51,9 @@ public sealed class ProviderRouteTransportFactory : IRouteTransportFactory
     ITransportListener listener =
         provider.CreateListener();
 
-    if (listener is not TcpTransportListener tcpListener)
-    {
-        throw new InvalidOperationException(
-            "TCP transport listener was expected.");
-    }
-
     return new StartedTransportListener(
-        tcpListener,
-        tcpListener.LocalEndpoint);
+        listener,
+        listener.LocalEndpoint);
 }
     public int GetListenerPort(ITransportEndpoint endpoint)
     {
@@ -103,6 +97,7 @@ private ITransportProvider ResolveProvider(
         };
     }
 }
+
 
 
 

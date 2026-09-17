@@ -1,4 +1,4 @@
-using System.Net;
+﻿using System.Net;
 using System.Security.Cryptography;
 using System.Text.Json;
 using Drop.Transport;
@@ -229,7 +229,7 @@ public sealed class TcpFileTransferTests
     {
         await using TcpTransportListener listener = new(IPAddress.Loopback, 0);
         listener.Start();
-        TcpTransportEndpoint endpoint = listener.LocalEndpoint;
+        TcpTransportEndpoint endpoint = (TcpTransportEndpoint)listener.LocalEndpoint;
         TcpFileReceiver receiver = new(ReceiverDevice);
         Task<ReceiveSessionResult> receiveTask = Task.Run(async () =>
         {
@@ -400,3 +400,4 @@ public sealed class TcpFileTransferTests
         CancellationToken cancellationToken) =>
         ValueTask.FromResult(IncomingTransferDecision.Accept);
 }
+

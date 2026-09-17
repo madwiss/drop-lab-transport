@@ -1,4 +1,4 @@
-using System.Net;
+﻿using System.Net;
 using System.Net.Sockets;
 
 namespace Drop.Transport;
@@ -66,7 +66,7 @@ public sealed class TcpTransportListener : ITransportListener
         }
     }
 
-    public TcpTransportEndpoint LocalEndpoint
+    public ITransportEndpoint LocalEndpoint
     {
         get
         {
@@ -122,3 +122,4 @@ internal sealed class TcpReliableByteStream(TcpClient client) : IReliableByteStr
         _client.Dispose();
     }
 }
+
