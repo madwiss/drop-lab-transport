@@ -46,7 +46,7 @@ public sealed class ProviderRouteTransportFactory : IRouteTransportFactory
     public StartedTransportListener CreateStartedListener()
 {
     ITransportProvider provider =
-        _resolver.GetRequired("tcp-lan");
+        _resolver.GetBestAvailable();
 
     ITransportListener listener =
         provider.CreateListener();
@@ -78,7 +78,7 @@ private ITransportProvider ResolveProvider(
         return candidate.TransportKind switch
         {
             TransportKind.ReliableByteStream =>
-                _resolver.GetRequired("tcp-lan"),
+                _resolver.GetBestAvailable(),
 
             _ =>
                 throw new NotSupportedException(
@@ -103,6 +103,8 @@ private ITransportProvider ResolveProvider(
         };
     }
 }
+
+
 
 
 
