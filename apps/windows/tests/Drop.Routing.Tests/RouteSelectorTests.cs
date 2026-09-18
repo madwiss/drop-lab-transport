@@ -51,7 +51,7 @@ public sealed class RouteSelectorTests
             RouteKind.LocalLan,
             availability: CandidateAvailability.Unavailable);
         ConnectionCandidate unsupportedP2p = new(
-            "p2p",
+            "p2p", "tcp-lan",
             RouteKind.LocalPeerToPeer,
             TransportKind.Datagram,
             RouteCapabilities.None,
@@ -84,14 +84,11 @@ public sealed class RouteSelectorTests
     [TestMethod]
     public void ConnectionCandidateRejectsInvalidValues()
     {
-        Assert.Throws<ArgumentException>(() => new ConnectionCandidate(
-            " ", RouteKind.LocalLan, TransportKind.ReliableByteStream,
+        Assert.Throws<ArgumentException>(() => new ConnectionCandidate(" ", "tcp-lan", RouteKind.LocalLan, TransportKind.ReliableByteStream,
             ReliableStream, CandidateAvailability.Reachable));
-        Assert.Throws<ArgumentOutOfRangeException>(() => new ConnectionCandidate(
-            "lan", (RouteKind)999, TransportKind.ReliableByteStream,
+        Assert.Throws<ArgumentOutOfRangeException>(() => new ConnectionCandidate("lan", "tcp-lan", (RouteKind)999, TransportKind.ReliableByteStream,
             ReliableStream, CandidateAvailability.Reachable));
-        Assert.Throws<ArgumentOutOfRangeException>(() => new ConnectionCandidate(
-            "lan", RouteKind.LocalLan, TransportKind.ReliableByteStream,
+        Assert.Throws<ArgumentOutOfRangeException>(() => new ConnectionCandidate("lan", "tcp-lan", RouteKind.LocalLan, TransportKind.ReliableByteStream,
             ReliableStream, CandidateAvailability.Reachable, priority: -1));
     }
 
@@ -101,7 +98,7 @@ public sealed class RouteSelectorTests
         int priority = 0,
         CandidateAvailability availability = CandidateAvailability.Reachable) =>
         new(
-            id,
+            id, "tcp-lan",
             routeKind,
             TransportKind.ReliableByteStream,
             ReliableStream | RouteCapabilities.SupportsLargeTransfers,

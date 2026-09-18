@@ -51,6 +51,7 @@ public sealed record ConnectionCandidate
 
     public ConnectionCandidate(
         string candidateId,
+        string transportId,
         RouteKind routeKind,
         TransportKind transportKind,
         RouteCapabilities capabilities,
@@ -58,6 +59,7 @@ public sealed record ConnectionCandidate
         int priority = 0)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(candidateId);
+        ArgumentException.ThrowIfNullOrWhiteSpace(transportId);
 
         if (!Enum.IsDefined(routeKind))
             throw new ArgumentOutOfRangeException(nameof(routeKind));
@@ -71,6 +73,7 @@ public sealed record ConnectionCandidate
             throw new ArgumentOutOfRangeException(nameof(priority));
 
         CandidateId = candidateId;
+        TransportId = transportId;
         RouteKind = routeKind;
         TransportKind = transportKind;
         Capabilities = capabilities;
@@ -79,6 +82,7 @@ public sealed record ConnectionCandidate
     }
 
     public string CandidateId { get; }
+    public string TransportId { get; }
 
     public RouteKind RouteKind { get; }
 

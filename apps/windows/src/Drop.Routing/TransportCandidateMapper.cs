@@ -14,6 +14,7 @@ public static class TransportCandidateMapper
 
         return new ConnectionCandidate(
             candidateId: candidate.CandidateId,
+            transportId: candidate.TransportId,
             routeKind: ResolveRouteKind(candidate),
             transportKind: ResolveTransportKind(candidate),
             capabilities: MapCapabilities(candidate.Capability),

@@ -41,7 +41,7 @@ public sealed class RouteManagerTests
         RouteManager manager = new();
         PeerRoutes peer = new("peer", [
             Candidate("failed", RouteKind.LocalLan),
-            new ConnectionCandidate("unavailable", RouteKind.RemoteDirect, TransportKind.ReliableByteStream, Reliable, CandidateAvailability.Unavailable),
+            new ConnectionCandidate("unavailable", "tcp-lan", RouteKind.RemoteDirect, TransportKind.ReliableByteStream, Reliable, CandidateAvailability.Unavailable),
             Candidate("usable", RouteKind.RemoteDirect)
         ]);
 
@@ -52,11 +52,11 @@ public sealed class RouteManagerTests
     public void IncompatibleRoutesAreRejected()
     {
         RouteManager manager = new();
-        PeerRoutes peer = new("peer", [new ConnectionCandidate("bad", RouteKind.LocalLan, TransportKind.Datagram, RouteCapabilities.None, CandidateAvailability.Reachable)]);
+        PeerRoutes peer = new("peer", [new ConnectionCandidate("bad", "tcp-lan", RouteKind.LocalLan, TransportKind.Datagram, RouteCapabilities.None, CandidateAvailability.Reachable)]);
 
         Assert.IsNull(manager.SelectRoute(peer, Reliable));
     }
 
     private static ConnectionCandidate Candidate(string id, RouteKind kind, int priority = 0) =>
-        new(id, kind, TransportKind.ReliableByteStream, Reliable | RouteCapabilities.SupportsLargeTransfers, CandidateAvailability.Reachable, priority);
+        new(id, "tcp-lan", kind, TransportKind.ReliableByteStream, Reliable | RouteCapabilities.SupportsLargeTransfers, CandidateAvailability.Reachable, priority);
 }

@@ -61,7 +61,7 @@ private ITransportProvider ResolveProvider(
         return candidate.TransportKind switch
         {
             TransportKind.ReliableByteStream =>
-                _resolver.GetBestAvailable(),
+                _resolver.GetRequired(candidate.TransportId),
 
             _ =>
                 throw new NotSupportedException(

@@ -7,7 +7,7 @@ namespace Drop.Routing.Tests;
 public sealed class ConnectionStateTests
 {
     private static readonly ConnectionCandidate Candidate = new(
-        "lan-1",
+        "lan-1", "tcp-lan",
         RouteKind.LocalLan,
         TransportKind.ReliableByteStream,
         RouteCapabilities.Reliable | RouteCapabilities.Ordered | RouteCapabilities.Bidirectional,
