@@ -263,6 +263,81 @@ public sealed class TcpFileTransferTests
     }
 
     [TestMethod]
+    public async Task OneHundredTwentyEightFilesTransferInSingleSessionAsync()
+    {
+        using TestDirectory test = new();
+
+        const int fileCount = 128;
+        List<FileTransferSource> sources = [];
+        List<(string Name, string Path, long Length, string Sha256)> expected = [];
+
+        for (int i = 0; i < fileCount; i++)
+        {
+            int size = 1024 + (i % 17) * 257;
+            string name = $"batch-{i:D3}.bin";
+            byte[] content = RandomNumberGenerator.GetBytes(size);
+            string source = test.WriteSource(name, content);
+
+            sources.Add(new FileTransferSource(source));
+            expected.Add((
+                name,
+                source,
+                content.LongLength,
+                Convert.ToHexStringLower(SHA256.HashData(content))));
+        }
+
+        await using TcpTransportListener listener =
+            new(IPAddress.Loopback, 0);
+
+        listener.Start();
+
+        TcpTransportEndpoint endpoint =
+            (TcpTransportEndpoint)listener.LocalEndpoint;
+
+        TcpFileReceiver receiver = new(ReceiverDevice);
+
+        Task<ReceiveSessionResult> receiveTask = Task.Run(async () =>
+        {
+            IReliableByteStream accepted = await listener.AcceptAsync();
+
+            return await receiver.ReceiveAsync(
+                accepted,
+                test.Destination,
+                AcceptOffer);
+        });
+
+        TcpFileSender sender =
+            new(SenderDevice, new TcpTransportConnector());
+
+        SendSessionResult sendResult = await sender.SendAsync(
+            endpoint,
+            sources);
+
+        ReceiveSessionResult receiveResult = await receiveTask;
+
+        Assert.IsTrue(receiveResult.Success);
+        Assert.HasCount(fileCount, sendResult.Files);
+        Assert.HasCount(fileCount, receiveResult.Files);
+        Assert.HasCount(fileCount, Directory.GetFiles(test.Destination));
+
+        foreach ((string name, string source, long length, string sha256) in expected)
+        {
+            SentFileResult sent = sendResult.Files.Single(
+                file => Path.GetFileName(file.SourcePath) == name);
+
+            ReceivedFileResult received = receiveResult.Files.Single(
+                file => Path.GetFileName(file.Path) == name);
+
+            Assert.AreEqual(length, sent.BytesTransferred);
+            Assert.AreEqual(length, received.BytesReceived);
+            Assert.AreEqual(sha256, sent.Sha256);
+            Assert.AreEqual(sha256, received.Sha256);
+            Assert.AreEqual(
+                sha256,
+                await HashFileAsync(received.Path));
+        }
+    }
+    [TestMethod]
     public async Task SenderCancellationDuringPayloadCleansReceiverPartialFileAsync()
     {
         using TestDirectory test = new();
