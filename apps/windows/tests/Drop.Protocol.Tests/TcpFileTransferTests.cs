@@ -338,6 +338,137 @@ public sealed class TcpFileTransferTests
         }
     }
     [TestMethod]
+    public async Task InvalidFileIdMetadataIsRejectedAsync()
+    {
+        using TestDirectory test = new();
+        byte[] payload = RandomNumberGenerator.GetBytes(1024);
+
+        await using ManualSession session =
+            await ManualSession.StartAsync(test.Destination);
+
+        using JsonDocument accept =
+            await session.HandshakeAndOfferAsync("invalid-id.bin", payload.Length);
+
+        Assert.AreEqual(
+            "ACCEPT",
+            accept.RootElement.GetProperty("type").GetString());
+
+        await session.WriteAsync(new
+        {
+            type = "FILE_START",
+            protocolVersion = 1,
+            transferId = session.TransferId,
+            fileId = "not-a-guid",
+            name = "invalid-id.bin",
+            size = payload.LongLength,
+            sha256 = Convert.ToHexStringLower(SHA256.HashData(payload))
+        });
+
+        await Assert.ThrowsAsync<InvalidDataException>(
+            async () => await session.ReceiverTask);
+
+        Assert.IsEmpty(Directory.GetFiles(test.Destination));
+    }
+
+    [TestMethod]
+    public async Task NegativeSizeMetadataIsRejectedAsync()
+    {
+        using TestDirectory test = new();
+        byte[] payload = RandomNumberGenerator.GetBytes(1024);
+
+        await using ManualSession session =
+            await ManualSession.StartAsync(test.Destination);
+
+        using JsonDocument accept =
+            await session.HandshakeAndOfferAsync("negative-size.bin", payload.Length);
+
+        Assert.AreEqual(
+            "ACCEPT",
+            accept.RootElement.GetProperty("type").GetString());
+
+        await session.WriteAsync(new
+        {
+            type = "FILE_START",
+            protocolVersion = 1,
+            transferId = session.TransferId,
+            fileId = session.FileId,
+            name = "negative-size.bin",
+            size = -1L,
+            sha256 = Convert.ToHexStringLower(SHA256.HashData(payload))
+        });
+
+        await Assert.ThrowsAsync<InvalidDataException>(
+            async () => await session.ReceiverTask);
+
+        Assert.IsEmpty(Directory.GetFiles(test.Destination));
+    }
+
+    [TestMethod]
+    public async Task EmptyNameMetadataIsRejectedAsync()
+    {
+        using TestDirectory test = new();
+        byte[] payload = RandomNumberGenerator.GetBytes(1024);
+
+        await using ManualSession session =
+            await ManualSession.StartAsync(test.Destination);
+
+        using JsonDocument accept =
+            await session.HandshakeAndOfferAsync("empty-name.bin", payload.Length);
+
+        Assert.AreEqual(
+            "ACCEPT",
+            accept.RootElement.GetProperty("type").GetString());
+
+        await session.WriteAsync(new
+        {
+            type = "FILE_START",
+            protocolVersion = 1,
+            transferId = session.TransferId,
+            fileId = session.FileId,
+            name = "",
+            size = payload.LongLength,
+            sha256 = Convert.ToHexStringLower(SHA256.HashData(payload))
+        });
+
+        await Assert.ThrowsAsync<InvalidDataException>(
+            async () => await session.ReceiverTask);
+
+        Assert.IsEmpty(Directory.GetFiles(test.Destination));
+    }
+
+    [TestMethod]
+    public async Task InvalidSha256MetadataIsRejectedAsync()
+    {
+        using TestDirectory test = new();
+        byte[] payload = RandomNumberGenerator.GetBytes(1024);
+
+        await using ManualSession session =
+            await ManualSession.StartAsync(test.Destination);
+
+        using JsonDocument accept =
+            await session.HandshakeAndOfferAsync("invalid-sha.bin", payload.Length);
+
+        Assert.AreEqual(
+            "ACCEPT",
+            accept.RootElement.GetProperty("type").GetString());
+
+        await session.WriteAsync(new
+        {
+            type = "FILE_START",
+            protocolVersion = 1,
+            transferId = session.TransferId,
+            fileId = session.FileId,
+            name = "invalid-sha.bin",
+            size = payload.LongLength,
+            sha256 = "not-a-sha256"
+        });
+
+        await Assert.ThrowsAsync<InvalidDataException>(
+            async () => await session.ReceiverTask);
+
+        Assert.IsEmpty(Directory.GetFiles(test.Destination));
+    }
+    [TestMethod]
     public async Task SenderCancellationDuringPayloadCleansReceiverPartialFileAsync()
     {
         using TestDirectory test = new();
@@ -366,10 +497,12 @@ public sealed class TcpFileTransferTests
         });
 
         using CancellationTokenSource cancellation = new();
+        int cancellationRequested = 0;
 
         Progress<FileTransferProgress> progress = new(value =>
         {
-            if (value.BytesTransferred >= 64 * 1024)
+            if (value.BytesTransferred >= 64 * 1024 &&
+                Interlocked.Exchange(ref cancellationRequested, 1) == 0)
             {
                 cancellation.Cancel();
             }
@@ -663,7 +796,7 @@ public sealed class TcpFileTransferTests
             await Listener.DisposeAsync();
         }
 
-        private async Task WriteAsync(object message) =>
+        public async Task WriteAsync(object message) =>
             await ControlFrameCodec.WriteAsync(Stream, JsonSerializer.SerializeToElement(message));
     }
 
