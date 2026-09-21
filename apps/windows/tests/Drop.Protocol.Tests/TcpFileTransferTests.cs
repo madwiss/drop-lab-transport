@@ -1,4 +1,4 @@
-﻿using System.Net;
+using System.Net;
 using System.Security.Cryptography;
 using System.Text.Json;
 using Drop.Transport;
@@ -222,6 +222,85 @@ public sealed class TcpFileTransferTests
         Assert.IsEmpty(Directory.GetFiles(test.Destination));
     }
 
+    [TestMethod]
+    public async Task MultipleFilesTransferInSingleSessionAsync()
+    {
+        using TestDirectory test = new();
+
+        byte[] firstContent = RandomNumberGenerator.GetBytes(32 * 1024 + 7);
+        byte[] secondContent = RandomNumberGenerator.GetBytes(48 * 1024 + 11);
+
+        string firstSource = test.WriteSource("first.bin", firstContent);
+        string secondSource = test.WriteSource("second.bin", secondContent);
+
+        await using TcpTransportListener listener =
+            new(IPAddress.Loopback, 0);
+
+        listener.Start();
+
+        TcpTransportEndpoint endpoint =
+            (TcpTransportEndpoint)listener.LocalEndpoint;
+
+        TcpFileReceiver receiver = new(ReceiverDevice);
+
+        Task<ReceiveSessionResult> receiveTask = Task.Run(async () =>
+        {
+            IReliableByteStream accepted = await listener.AcceptAsync();
+
+            return await receiver.ReceiveAsync(
+                accepted,
+                test.Destination,
+                AcceptOffer);
+        });
+
+        TcpFileSender sender =
+            new(SenderDevice, new TcpTransportConnector());
+
+        SendSessionResult sendResult = await sender.SendAsync(
+            endpoint,
+            [
+                new FileTransferSource(firstSource),
+                new FileTransferSource(secondSource)
+            ]);
+
+        ReceiveSessionResult receiveResult = await receiveTask;
+
+        Assert.IsTrue(receiveResult.Success);
+        Assert.AreEqual(2, sendResult.Files.Count);
+        Assert.AreEqual(2, receiveResult.Files.Count);
+
+        Assert.AreEqual(
+            await HashFileAsync(firstSource),
+            sendResult.Files[0].Sha256);
+
+        Assert.AreEqual(
+            await HashFileAsync(secondSource),
+            sendResult.Files[1].Sha256);
+
+        string firstReceived = receiveResult.Files
+            .Single(file => file.Path.EndsWith("first.bin", StringComparison.OrdinalIgnoreCase))
+            .Path;
+
+        string secondReceived = receiveResult.Files
+            .Single(file => file.Path.EndsWith("second.bin", StringComparison.OrdinalIgnoreCase))
+            .Path;
+
+        CollectionAssert.AreEqual(
+            firstContent,
+            await File.ReadAllBytesAsync(firstReceived));
+
+        CollectionAssert.AreEqual(
+            secondContent,
+            await File.ReadAllBytesAsync(secondReceived));
+
+        Assert.AreEqual(
+            await HashFileAsync(firstSource),
+            await HashFileAsync(firstReceived));
+
+        Assert.AreEqual(
+            await HashFileAsync(secondSource),
+            await HashFileAsync(secondReceived));
+    }
     private static async Task<TransferPair> TransferAsync(
         string source,
         string destination,
