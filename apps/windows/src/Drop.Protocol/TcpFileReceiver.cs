@@ -1,4 +1,4 @@
-﻿using System.Buffers;
+using System.Buffers;
 using System.Security.Cryptography;
 using System.Text.Json;
 using Drop.Transport;
@@ -23,167 +23,330 @@ public sealed class TcpFileReceiver(DeviceInfo localDevice) : IFileReceiver
         ArgumentNullException.ThrowIfNull(connection);
         ArgumentException.ThrowIfNullOrWhiteSpace(destinationDirectory);
         ArgumentNullException.ThrowIfNull(decide);
+
         timeoutOptions ??= new TransferTimeoutOptions();
 
         string directory = Path.GetFullPath(destinationDirectory);
         Directory.CreateDirectory(directory);
-        string? activePartialPath = null;
-        string? activeFinalPath = null;
 
         await using (connection)
         {
             Stream stream = connection.Stream;
-            try
-            {
-                DeviceInfo sender;
-                using (JsonDocument hello = await ReadControlAsync(
-                    stream, "HELLO", timeoutOptions.Handshake, cancellationToken).ConfigureAwait(false))
-                {
-                    sender = ReadDevice(hello.RootElement);
-                }
 
-                await WriteControlAsync(stream, new
+            DeviceInfo sender;
+
+            using (JsonDocument hello = await ReadControlAsync(
+                stream,
+                "HELLO",
+                timeoutOptions.Handshake,
+                cancellationToken).ConfigureAwait(false))
+            {
+                sender = ReadDevice(hello.RootElement);
+            }
+
+            await WriteControlAsync(
+                stream,
+                new
                 {
                     type = "HELLO_ACK",
                     protocolVersion = ProtocolMessage.Version,
                     device = DeviceJson(localDevice)
-                }, timeoutOptions.Handshake, cancellationToken, "HELLO_ACK").ConfigureAwait(false);
+                },
+                timeoutOptions.Handshake,
+                cancellationToken,
+                "HELLO_ACK").ConfigureAwait(false);
 
-                OfferedFile offered;
-                Guid transferId;
-                using (JsonDocument offer = await ReadControlAsync(
-                    stream, "OFFER", timeoutOptions.Handshake, cancellationToken).ConfigureAwait(false))
+            Guid transferId;
+            OfferedFile[] offeredFiles;
+
+            using (JsonDocument offer = await ReadControlAsync(
+                stream,
+                "OFFER",
+                timeoutOptions.Handshake,
+                cancellationToken).ConfigureAwait(false))
+            {
+                transferId = ProtocolMessage.RequiredGuid(
+                    offer.RootElement,
+                    "transferId");
+
+                offeredFiles = ReadOfferedFiles(offer.RootElement);
+
+                long totalBytes = ProtocolMessage.RequiredSize(
+                    offer.RootElement,
+                    "totalBytes");
+
+                long calculatedTotalBytes = 0;
+
+                foreach (OfferedFile offeredFile in offeredFiles)
                 {
-                    transferId = ProtocolMessage.RequiredGuid(offer.RootElement, "transferId");
-                    offered = ReadSingleOfferedFile(offer.RootElement);
-                    long totalBytes = ProtocolMessage.RequiredSize(offer.RootElement, "totalBytes");
-                    if (totalBytes != offered.Size)
-                    {
-                        throw new InvalidDataException("OFFER totalBytes does not match the offered file.");
-                    }
+                    calculatedTotalBytes =
+                        checked(calculatedTotalBytes + offeredFile.Size);
                 }
 
-                IncomingTransferOffer incomingOffer = new(
-                    transferId, sender, offered.FileId, offered.Name, offered.Size);
-                IncomingTransferDecision decision = await TransferTimeout.RunAsync(
+                if (totalBytes != calculatedTotalBytes)
+                {
+                    throw new InvalidDataException(
+                        "OFFER totalBytes does not match the offered files.");
+                }
+            }
+
+            IncomingTransferOffer incomingOffer = new(
+                transferId,
+                sender,
+                offeredFiles[0].FileId,
+                offeredFiles[0].Name,
+                offeredFiles[0].Size)
+            {
+                Files = offeredFiles
+                    .Select(file => new IncomingTransferFile(
+                        file.FileId,
+                        file.Name,
+                        file.Size))
+                    .ToArray()
+            };
+
+            IncomingTransferDecision decision =
+                await TransferTimeout.RunAsync(
                     token => decide(incomingOffer, token).AsTask(),
                     timeoutOptions.ReceiverAcceptance,
                     cancellationToken,
                     "receiver acceptance")
-                    .ConfigureAwait(false);
-                if (decision == IncomingTransferDecision.Decline)
-                {
-                    await WriteControlAsync(stream, new
+                .ConfigureAwait(false);
+
+            if (decision == IncomingTransferDecision.Decline)
+            {
+                await WriteControlAsync(
+                    stream,
+                    new
                     {
                         type = "DECLINE",
                         protocolVersion = ProtocolMessage.Version,
                         transferId,
                         reason = "user_declined"
-                    }, timeoutOptions.Handshake, cancellationToken, "DECLINE").ConfigureAwait(false);
-                    return new ReceiveSessionResult(transferId, false, [], "DECLINED");
-                }
+                    },
+                    timeoutOptions.Handshake,
+                    cancellationToken,
+                    "DECLINE").ConfigureAwait(false);
 
-                await WriteControlAsync(stream, new
+                return new ReceiveSessionResult(
+                    transferId,
+                    false,
+                    [],
+                    "DECLINED");
+            }
+
+            await WriteControlAsync(
+                stream,
+                new
                 {
                     type = "ACCEPT",
                     protocolVersion = ProtocolMessage.Version,
                     transferId
-                }, timeoutOptions.Handshake, cancellationToken, "ACCEPT").ConfigureAwait(false);
+                },
+                timeoutOptions.Handshake,
+                cancellationToken,
+                "ACCEPT").ConfigureAwait(false);
 
-                string expectedHash;
-                using (JsonDocument fileStart = await ReadControlAsync(
-                    stream, "FILE_START", timeoutOptions.Handshake, cancellationToken).ConfigureAwait(false))
+            List<ReceivedFileResult> receivedFiles =
+                new(offeredFiles.Length);
+
+            List<(OfferedFile Offered, string PartialPath, string Sha256)> pendingFiles = [];
+            List<string> publishedFinalPaths = [];
+
+            void CleanupPendingFiles()
+            {
+                foreach (var pending in pendingFiles)
                 {
-                    JsonElement root = fileStart.RootElement;
-                    ProtocolMessage.RequireTransfer(root, transferId);
-                    if (ProtocolMessage.RequiredGuid(root, "fileId") != offered.FileId ||
-                        ProtocolMessage.RequiredString(root, "name") != offered.Name ||
-                        ProtocolMessage.RequiredSize(root) != offered.Size)
-                    {
-                        throw new InvalidDataException("FILE_START does not match the accepted offer.");
-                    }
-
-                    expectedHash = ProtocolMessage.RequiredString(root, "sha256");
-                    if (!IsLowercaseSha256(expectedHash))
-                    {
-                        throw new InvalidDataException("FILE_START contains an invalid SHA-256 value.");
-                    }
+                    DeletePartial(pending.PartialPath);
                 }
 
-                string safeName = DestinationFileNames.Sanitize(offered.Name);
-                activePartialPath = Path.Combine(
-                    directory,
-                    $"{safeName}.{Guid.NewGuid():N}.drop-partial");
-                DestinationFileNames.EnsureInsideDirectory(directory, activePartialPath);
-
-                string actualHash = await ReceivePayloadAsync(
-                    stream,
-                    activePartialPath,
-                    offered.FileId,
-                    offered.Size,
-                    progress,
-                    timeoutOptions.PayloadStall,
-                    cancellationToken)
-                    .ConfigureAwait(false);
-
-                using (JsonDocument fileEnd = await ReadControlAsync(
-                    stream, "FILE_END", timeoutOptions.Handshake, cancellationToken).ConfigureAwait(false))
+                foreach (string finalPath in publishedFinalPaths)
                 {
-                    ProtocolMessage.RequireTransfer(fileEnd.RootElement, transferId);
-                    if (ProtocolMessage.RequiredGuid(fileEnd.RootElement, "fileId") != offered.FileId)
+                    DeletePartial(finalPath);
+                }
+            }
+
+            try
+            {
+                foreach (OfferedFile offered in offeredFiles)
+                {
+                    string? activePartialPath = null;
+
+                    try
                     {
-                        throw new InvalidDataException("FILE_END has an unexpected fileId.");
+                        string expectedHash;
+
+                        using (JsonDocument fileStart = await ReadControlAsync(
+                            stream,
+                            "FILE_START",
+                            timeoutOptions.Handshake,
+                            cancellationToken).ConfigureAwait(false))
+                        {
+                            JsonElement root = fileStart.RootElement;
+
+                            ProtocolMessage.RequireTransfer(
+                                root,
+                                transferId);
+
+                            if (ProtocolMessage.RequiredGuid(
+                                    root,
+                                    "fileId") != offered.FileId ||
+                                ProtocolMessage.RequiredString(
+                                    root,
+                                    "name") != offered.Name ||
+                                ProtocolMessage.RequiredSize(root) != offered.Size)
+                            {
+                                throw new InvalidDataException(
+                                    "FILE_START does not match the accepted offer.");
+                            }
+
+                            expectedHash = ProtocolMessage.RequiredString(
+                                root,
+                                "sha256");
+
+                            if (!IsLowercaseSha256(expectedHash))
+                            {
+                                throw new InvalidDataException(
+                                    "FILE_START contains an invalid SHA-256 value.");
+                            }
+                        }
+
+                        string safeName =
+                            DestinationFileNames.Sanitize(offered.Name);
+
+                        activePartialPath = Path.Combine(
+                            directory,
+                            $"{safeName}.{Guid.NewGuid():N}.drop-partial");
+
+                        DestinationFileNames.EnsureInsideDirectory(
+                            directory,
+                            activePartialPath);
+
+                        string actualHash = await ReceivePayloadAsync(
+                            stream,
+                            activePartialPath,
+                            offered.FileId,
+                            offered.Size,
+                            progress,
+                            timeoutOptions.PayloadStall,
+                            cancellationToken).ConfigureAwait(false);
+
+                        using (JsonDocument fileEnd = await ReadControlAsync(
+                            stream,
+                            "FILE_END",
+                            timeoutOptions.Handshake,
+                            cancellationToken).ConfigureAwait(false))
+                        {
+                            ProtocolMessage.RequireTransfer(
+                                fileEnd.RootElement,
+                                transferId);
+
+                            if (ProtocolMessage.RequiredGuid(
+                                fileEnd.RootElement,
+                                "fileId") != offered.FileId)
+                            {
+                                throw new InvalidDataException(
+                                    "FILE_END has an unexpected fileId.");
+                            }
+                        }
+
+                        if (!CryptographicOperations.FixedTimeEquals(
+                            Convert.FromHexString(expectedHash),
+                            Convert.FromHexString(actualHash)))
+                        {
+                            DeletePartial(activePartialPath);
+                            activePartialPath = null;
+
+                            CleanupPendingFiles();
+
+                            await WriteFileResultAsync(
+                                stream,
+                                transferId,
+                                offered.FileId,
+                                "hash_mismatch",
+                                timeoutOptions.Handshake,
+                                cancellationToken).ConfigureAwait(false);
+
+                            return new ReceiveSessionResult(
+                                transferId,
+                                false,
+                                receivedFiles,
+                                "HASH_MISMATCH");
+                        }
+
+                        pendingFiles.Add((
+                            offered,
+                            activePartialPath,
+                            actualHash));
+
+                        activePartialPath = null;
+
+                        await WriteFileResultAsync(
+                            stream,
+                            transferId,
+                            offered.FileId,
+                            "ok",
+                            timeoutOptions.Handshake,
+                            cancellationToken).ConfigureAwait(false);
+                    }
+                    finally
+                    {
+                        if (activePartialPath is not null)
+                        {
+                            DeletePartial(activePartialPath);
+                        }
                     }
                 }
-
-                if (!CryptographicOperations.FixedTimeEquals(
-                    Convert.FromHexString(expectedHash), Convert.FromHexString(actualHash)))
-                {
-                    DeletePartial(activePartialPath);
-                    activePartialPath = null;
-                    await WriteFileResultAsync(
-                        stream, transferId, offered.FileId, "hash_mismatch", timeoutOptions.Handshake, cancellationToken)
-                        .ConfigureAwait(false);
-                    return new ReceiveSessionResult(transferId, false, [], "HASH_MISMATCH");
-                }
-
-                await WriteFileResultAsync(stream, transferId, offered.FileId, "ok", timeoutOptions.Handshake, cancellationToken)
-                    .ConfigureAwait(false);
 
                 using (JsonDocument complete = await ReadControlAsync(
-                    stream, "COMPLETE", timeoutOptions.Handshake, cancellationToken).ConfigureAwait(false))
+                    stream,
+                    "COMPLETE",
+                    timeoutOptions.Handshake,
+                    cancellationToken).ConfigureAwait(false))
                 {
-                    ProtocolMessage.RequireTransfer(complete.RootElement, transferId);
+                    ProtocolMessage.RequireTransfer(
+                        complete.RootElement,
+                        transferId);
                 }
 
-                activeFinalPath = MoveToUniqueFinalPath(activePartialPath, directory, offered.Name);
-                activePartialPath = null;
-
-                await WriteControlAsync(stream, new
+                foreach (var pending in pendingFiles)
                 {
-                    type = "COMPLETE_ACK",
-                    protocolVersion = ProtocolMessage.Version,
-                    transferId
-                }, timeoutOptions.Handshake, cancellationToken, "COMPLETE_ACK").ConfigureAwait(false);
+                    string finalPath = MoveToUniqueFinalPath(
+                        pending.PartialPath,
+                        directory,
+                        pending.Offered.Name);
 
-                string finalPath = activeFinalPath;
-                activeFinalPath = null;
+                    publishedFinalPaths.Add(finalPath);
+
+                    receivedFiles.Add(
+                        new ReceivedFileResult(
+                            pending.Offered.FileId,
+                            finalPath,
+                            pending.Offered.Size,
+                            pending.Sha256));
+                }
+
+                await WriteControlAsync(
+                    stream,
+                    new
+                    {
+                        type = "COMPLETE_ACK",
+                        protocolVersion = ProtocolMessage.Version,
+                        transferId
+                    },
+                    timeoutOptions.Handshake,
+                    cancellationToken,
+                    "COMPLETE_ACK").ConfigureAwait(false);
 
                 return new ReceiveSessionResult(
                     transferId,
                     true,
-                    [new ReceivedFileResult(offered.FileId, finalPath, offered.Size, actualHash)]);
+                    receivedFiles);
             }
-            finally
+            catch
             {
-                if (activePartialPath is not null)
-                {
-                    DeletePartial(activePartialPath);
-                }
-                if (activeFinalPath is not null)
-                {
-                    DeletePartial(activeFinalPath);
-                }
+                CleanupPendingFiles();
+                throw;
             }
         }
     }
@@ -273,21 +436,41 @@ public sealed class TcpFileReceiver(DeviceInfo localDevice) : IFileReceiver
         }
     }
 
-    private static OfferedFile ReadSingleOfferedFile(JsonElement offer)
+    private static OfferedFile[] ReadOfferedFiles(JsonElement offer)
     {
         if (!offer.TryGetProperty("files", out JsonElement files) ||
-            files.ValueKind != JsonValueKind.Array || files.GetArrayLength() != 1)
+            files.ValueKind != JsonValueKind.Array ||
+            files.GetArrayLength() == 0)
         {
-            throw new InvalidDataException("This initial transfer core requires exactly one offered file.");
+            throw new InvalidDataException(
+                "OFFER must contain at least one file.");
         }
 
-        JsonElement file = files[0];
-        return new OfferedFile(
-            ProtocolMessage.RequiredGuid(file, "fileId"),
-            ProtocolMessage.RequiredString(file, "name"),
-            ProtocolMessage.RequiredSize(file));
-    }
+        OfferedFile[] offeredFiles = new OfferedFile[files.GetArrayLength()];
+        HashSet<Guid> fileIds = [];
 
+        for (int index = 0; index < offeredFiles.Length; index++)
+        {
+            JsonElement file = files[index];
+
+            Guid fileId = ProtocolMessage.RequiredGuid(
+                file,
+                "fileId");
+
+            if (!fileIds.Add(fileId))
+            {
+                throw new InvalidDataException(
+                    "OFFER contains duplicate fileId values.");
+            }
+
+            offeredFiles[index] = new OfferedFile(
+                fileId,
+                ProtocolMessage.RequiredString(file, "name"),
+                ProtocolMessage.RequiredSize(file));
+        }
+
+        return offeredFiles;
+    }
     private static DeviceInfo ReadDevice(JsonElement message)
     {
         if (!message.TryGetProperty("device", out JsonElement device) ||

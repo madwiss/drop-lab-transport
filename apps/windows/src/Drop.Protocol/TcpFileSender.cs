@@ -1,4 +1,4 @@
-﻿using System.Buffers;
+using System.Buffers;
 using System.Security.Cryptography;
 using System.Text.Json;
 using Drop.Transport;
@@ -9,60 +9,252 @@ public sealed class TcpFileSender(DeviceInfo localDevice, ITransportConnector co
 {
     private const int BufferSize = 128 * 1024;
 
-    public async Task<SendSessionResult> SendAsync(ITransportEndpoint endpoint, string sourcePath, string? remoteFileName = null, IProgress<FileTransferProgress>? progress = null, CancellationToken cancellationToken = default, IProgress<SendStage>? stageProgress = null, TransferTimeoutOptions? timeoutOptions = null)
+    public Task<SendSessionResult> SendAsync(
+        ITransportEndpoint endpoint,
+        string sourcePath,
+        string? remoteFileName = null,
+        IProgress<FileTransferProgress>? progress = null,
+        CancellationToken cancellationToken = default,
+        IProgress<SendStage>? stageProgress = null,
+        TransferTimeoutOptions? timeoutOptions = null) =>
+        SendAsync(
+            endpoint,
+            [new FileTransferSource(sourcePath, remoteFileName)],
+            progress,
+            cancellationToken,
+            stageProgress,
+            timeoutOptions);
+
+    public async Task<SendSessionResult> SendAsync(
+        ITransportEndpoint endpoint,
+        IReadOnlyList<FileTransferSource> files,
+        IProgress<FileTransferProgress>? progress = null,
+        CancellationToken cancellationToken = default,
+        IProgress<SendStage>? stageProgress = null,
+        TransferTimeoutOptions? timeoutOptions = null)
     {
         ArgumentNullException.ThrowIfNull(endpoint);
         ArgumentNullException.ThrowIfNull(connector);
-        ArgumentException.ThrowIfNullOrWhiteSpace(sourcePath);
-        FileInfo source = new(sourcePath);
-        if (!source.Exists) throw new FileNotFoundException("Source file was not found.", source.FullName);
+        ArgumentNullException.ThrowIfNull(files);
 
-        Guid transferId = Guid.NewGuid();
-        Guid fileId = Guid.NewGuid();
-        string offeredName = remoteFileName ?? source.Name;
-        long size = source.Length;
-        timeoutOptions ??= new TransferTimeoutOptions();
-
-        stageProgress?.Report(SendStage.Connecting);
-        await using IReliableByteStream connection = await ConnectWithRetryAsync(endpoint, timeoutOptions, cancellationToken).ConfigureAwait(false);
-        Stream stream = connection.Stream;
-
-        await WriteControlAsync(stream, new { type = "HELLO", protocolVersion = ProtocolMessage.Version, device = DeviceJson(localDevice) }, timeoutOptions.Handshake, cancellationToken, "HELLO").ConfigureAwait(false);
-        using (await ReadControlAsync(stream, "HELLO_ACK", timeoutOptions.Handshake, cancellationToken).ConfigureAwait(false)) { }
-
-        await WriteControlAsync(stream, new { type = "OFFER", protocolVersion = ProtocolMessage.Version, transferId, files = new[] { new { fileId, name = offeredName, size } }, totalBytes = size }, timeoutOptions.Handshake, cancellationToken, "OFFER").ConfigureAwait(false);
-
-        stageProgress?.Report(SendStage.WaitingForAcceptance);
-        using (JsonDocument accept = await ReadControlAsync(stream, "ACCEPT", timeoutOptions.ReceiverAcceptance, cancellationToken, "receiver acceptance").ConfigureAwait(false))
-            ProtocolMessage.RequireTransfer(accept.RootElement, transferId);
-
-        stageProgress?.Report(SendStage.PreparingFile);
-        string hash = await ComputeSha256Async(source.FullName, cancellationToken).ConfigureAwait(false);
-
-        await WriteControlAsync(stream, new { type = "FILE_START", protocolVersion = ProtocolMessage.Version, transferId, fileId, name = offeredName, size, sha256 = hash }, timeoutOptions.Handshake, cancellationToken, "FILE_START").ConfigureAwait(false);
-
-        stageProgress?.Report(SendStage.Transferring);
-        await StreamFileAsync(stream, source.FullName, fileId, size, progress, timeoutOptions.PayloadStall, cancellationToken).ConfigureAwait(false);
-
-        stageProgress?.Report(SendStage.Completing);
-        await WriteControlAsync(stream, new { type = "FILE_END", protocolVersion = ProtocolMessage.Version, transferId, fileId }, timeoutOptions.Handshake, cancellationToken, "FILE_END").ConfigureAwait(false);
-
-        using (JsonDocument result = await ReadControlAsync(stream, "FILE_RESULT", timeoutOptions.Handshake, cancellationToken).ConfigureAwait(false))
+        if (files.Count == 0)
         {
-            ProtocolMessage.RequireTransfer(result.RootElement, transferId);
-            if (ProtocolMessage.RequiredGuid(result.RootElement, "fileId") != fileId)
-                throw new TransferFailedException(TransferFailureKind.Protocol, "FILE_RESULT has an unexpected fileId.");
-            string status = ProtocolMessage.RequiredString(result.RootElement, "status");
-            if (status != "ok") throw new TransferFailedException(TransferFailureKind.Protocol, $"Receiver rejected the file: {status}.");
+            throw new ArgumentException("At least one file is required.", nameof(files));
         }
 
-        await WriteControlAsync(stream, new { type = "COMPLETE", protocolVersion = ProtocolMessage.Version, transferId }, timeoutOptions.Handshake, cancellationToken, "COMPLETE").ConfigureAwait(false);
-        using (JsonDocument completeAck = await ReadControlAsync(stream, "COMPLETE_ACK", timeoutOptions.Handshake, cancellationToken).ConfigureAwait(false))
-            ProtocolMessage.RequireTransfer(completeAck.RootElement, transferId);
+        List<PreparedFile> preparedFiles = new(files.Count);
 
-        return new SendSessionResult(transferId, [new SentFileResult(fileId, source.FullName, size, hash)]);
+        foreach (FileTransferSource requestedFile in files)
+        {
+            ArgumentNullException.ThrowIfNull(requestedFile);
+            ArgumentException.ThrowIfNullOrWhiteSpace(requestedFile.SourcePath);
+
+            FileInfo source = new(requestedFile.SourcePath);
+            if (!source.Exists)
+            {
+                throw new FileNotFoundException(
+                    "Source file was not found.",
+                    source.FullName);
+            }
+
+            string offeredName = string.IsNullOrWhiteSpace(requestedFile.RemoteFileName)
+                ? source.Name
+                : requestedFile.RemoteFileName!;
+
+            preparedFiles.Add(new PreparedFile(
+                Guid.NewGuid(),
+                source.FullName,
+                offeredName,
+                source.Length));
+        }
+
+        long totalBytes = 0;
+        foreach (PreparedFile file in preparedFiles)
+        {
+            totalBytes = checked(totalBytes + file.Size);
+        }
+
+        timeoutOptions ??= new TransferTimeoutOptions();
+
+        Guid transferId = Guid.NewGuid();
+
+        stageProgress?.Report(SendStage.Connecting);
+
+        await using IReliableByteStream connection =
+            await ConnectWithRetryAsync(
+                endpoint,
+                timeoutOptions,
+                cancellationToken).ConfigureAwait(false);
+
+        Stream stream = connection.Stream;
+
+        await WriteControlAsync(
+            stream,
+            new
+            {
+                type = "HELLO",
+                protocolVersion = ProtocolMessage.Version,
+                device = DeviceJson(localDevice)
+            },
+            timeoutOptions.Handshake,
+            cancellationToken,
+            "HELLO").ConfigureAwait(false);
+
+        using (await ReadControlAsync(
+            stream,
+            "HELLO_ACK",
+            timeoutOptions.Handshake,
+            cancellationToken).ConfigureAwait(false))
+        {
+        }
+
+        await WriteControlAsync(
+            stream,
+            new
+            {
+                type = "OFFER",
+                protocolVersion = ProtocolMessage.Version,
+                transferId,
+                files = preparedFiles
+                    .Select(file => new
+                    {
+                        fileId = file.FileId,
+                        name = file.Name,
+                        size = file.Size
+                    })
+                    .ToArray(),
+                totalBytes
+            },
+            timeoutOptions.Handshake,
+            cancellationToken,
+            "OFFER").ConfigureAwait(false);
+
+        stageProgress?.Report(SendStage.WaitingForAcceptance);
+
+        using (JsonDocument accept = await ReadControlAsync(
+            stream,
+            "ACCEPT",
+            timeoutOptions.ReceiverAcceptance,
+            cancellationToken,
+            "receiver acceptance").ConfigureAwait(false))
+        {
+            ProtocolMessage.RequireTransfer(accept.RootElement, transferId);
+        }
+
+        List<SentFileResult> results = new(preparedFiles.Count);
+
+        foreach (PreparedFile file in preparedFiles)
+        {
+            stageProgress?.Report(SendStage.PreparingFile);
+
+            string hash = await ComputeSha256Async(
+                file.SourcePath,
+                cancellationToken).ConfigureAwait(false);
+
+            await WriteControlAsync(
+                stream,
+                new
+                {
+                    type = "FILE_START",
+                    protocolVersion = ProtocolMessage.Version,
+                    transferId,
+                    fileId = file.FileId,
+                    name = file.Name,
+                    size = file.Size,
+                    sha256 = hash
+                },
+                timeoutOptions.Handshake,
+                cancellationToken,
+                "FILE_START").ConfigureAwait(false);
+
+            stageProgress?.Report(SendStage.Transferring);
+
+            await StreamFileAsync(
+                stream,
+                file.SourcePath,
+                file.FileId,
+                file.Size,
+                progress,
+                timeoutOptions.PayloadStall,
+                cancellationToken).ConfigureAwait(false);
+
+            stageProgress?.Report(SendStage.Completing);
+
+            await WriteControlAsync(
+                stream,
+                new
+                {
+                    type = "FILE_END",
+                    protocolVersion = ProtocolMessage.Version,
+                    transferId,
+                    fileId = file.FileId
+                },
+                timeoutOptions.Handshake,
+                cancellationToken,
+                "FILE_END").ConfigureAwait(false);
+
+            using (JsonDocument result = await ReadControlAsync(
+                stream,
+                "FILE_RESULT",
+                timeoutOptions.Handshake,
+                cancellationToken).ConfigureAwait(false))
+            {
+                ProtocolMessage.RequireTransfer(result.RootElement, transferId);
+
+                if (ProtocolMessage.RequiredGuid(
+                    result.RootElement,
+                    "fileId") != file.FileId)
+                {
+                    throw new TransferFailedException(
+                        TransferFailureKind.Protocol,
+                        "FILE_RESULT has an unexpected fileId.");
+                }
+
+                string status =
+                    ProtocolMessage.RequiredString(
+                        result.RootElement,
+                        "status");
+
+                if (status != "ok")
+                {
+                    throw new TransferFailedException(
+                        TransferFailureKind.Protocol,
+                        $"Receiver rejected the file: {status}.");
+                }
+            }
+
+            results.Add(new SentFileResult(
+                file.FileId,
+                file.SourcePath,
+                file.Size,
+                hash));
+        }
+
+        await WriteControlAsync(
+            stream,
+            new
+            {
+                type = "COMPLETE",
+                protocolVersion = ProtocolMessage.Version,
+                transferId
+            },
+            timeoutOptions.Handshake,
+            cancellationToken,
+            "COMPLETE").ConfigureAwait(false);
+
+        using (JsonDocument completeAck = await ReadControlAsync(
+            stream,
+            "COMPLETE_ACK",
+            timeoutOptions.Handshake,
+            cancellationToken).ConfigureAwait(false))
+        {
+            ProtocolMessage.RequireTransfer(
+                completeAck.RootElement,
+                transferId);
+        }
+
+        return new SendSessionResult(transferId, results);
     }
-
     private async Task<IReliableByteStream> ConnectWithRetryAsync(ITransportEndpoint endpoint, TransferTimeoutOptions options, CancellationToken cancellationToken)
     {
         TransferFailedException? lastFailure = null;
@@ -124,6 +316,11 @@ public sealed class TcpFileSender(DeviceInfo localDevice, ITransportConnector co
         }
     }
 
+    private sealed record PreparedFile(
+        Guid FileId,
+        string SourcePath,
+        string Name,
+        long Size);
     private static FileStream OpenRead(string path) => new(path, FileMode.Open, FileAccess.Read, FileShare.Read, BufferSize, FileOptions.Asynchronous | FileOptions.SequentialScan);
 
     private static async Task WriteControlAsync(Stream stream, object message, TimeSpan timeout, CancellationToken cancellationToken, string phase) =>
