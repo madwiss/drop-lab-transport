@@ -33,6 +33,8 @@ public partial class MainWindow : Window
     private ReceiverHost? _receiver;
     private DeviceInfo? _localDevice;
     private CancellationTokenSource? _sendCancellation;
+    private DropTrayIcon? _trayIcon;
+    private bool _exitRequested;
 
     public MainWindow()
 {
@@ -41,7 +43,12 @@ public partial class MainWindow : Window
         new TransportCandidateResolver(DefaultTransportRegistry.Create()));
 
     InitializeComponent();
-    DataContext = new { Transfer = _transfer, Incoming = _incoming };
+
+        _trayIcon = new DropTrayIcon(
+            ShowFromTray,
+            ExitFromTray);
+
+        DataContext = new { Transfer = _transfer, Incoming = _incoming };
     DeviceList.ItemsSource = _devices;
     _transfer.PropertyChanged += Transfer_PropertyChanged;
     _discovery.DeviceAppeared += Discovery_DeviceAppeared;
@@ -89,7 +96,7 @@ public partial class MainWindow : Window
             return;
         }
 
-        OpenFileDialog picker = new() { Title = $"Send a file to {device.DeviceName}", CheckFileExists = true };
+        Microsoft.Win32.OpenFileDialog picker = new() { Title = $"Send a file to {device.DeviceName}", CheckFileExists = true };
         if (picker.ShowDialog(this) != true) return;
 
         FileInfo file = new(picker.FileName);
@@ -239,7 +246,7 @@ return await decision.ConfigureAwait(false);
     }
 
     private void RefreshDiscoveryText() => DiscoveryStatusText.Text = _devices.Count == 0
-        ? "Looking for devicesâ€¦"
+        ? "Looking for devices…"
         : $"{_devices.Count} device{(_devices.Count == 1 ? string.Empty : "s")} available";
 
     private void Transfer_PropertyChanged(object? sender, PropertyChangedEventArgs e) => UpdateActions();
@@ -252,13 +259,36 @@ return await decision.ConfigureAwait(false);
     }
 
     private void MainWindow_Closing(object? sender, CancelEventArgs e)
+{
+    if (!_exitRequested)
     {
-        _sendCancellation?.Cancel();
-        _lifetime.Cancel();
+        e.Cancel = true;
+        Hide();
+        return;
     }
+
+    _sendCancellation?.Cancel();
+    _lifetime.Cancel();
+}
+
+private void ShowFromTray()
+{
+    Show();
+    WindowState = WindowState.Normal;
+    Activate();
+}
+
+private void ExitFromTray()
+{
+    _exitRequested = true;
+    Close();
+}
 
     private async void MainWindow_Closed(object? sender, EventArgs e)
     {
+
+        _trayIcon?.Dispose();
+        _trayIcon = null;
         _discovery.DeviceAppeared -= Discovery_DeviceAppeared;
         _discovery.DeviceUpdated -= Discovery_DeviceUpdated;
         _discovery.DeviceDisappeared -= Discovery_DeviceDisappeared;
