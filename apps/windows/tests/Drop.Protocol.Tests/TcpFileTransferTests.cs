@@ -223,6 +223,84 @@ public sealed class TcpFileTransferTests
     }
 
     [TestMethod]
+    public async Task SenderCancellationDuringPayloadCleansReceiverPartialFileAsync()
+    {
+        using TestDirectory test = new();
+        string source = test.WriteSource(
+            "sender-cancel.bin",
+            RandomNumberGenerator.GetBytes(32 * 1024 * 1024));
+
+        await using TcpTransportListener listener =
+            new(IPAddress.Loopback, 0);
+
+        listener.Start();
+
+        TcpTransportEndpoint endpoint =
+            (TcpTransportEndpoint)listener.LocalEndpoint;
+
+        TcpFileReceiver receiver = new(ReceiverDevice);
+
+        Task<ReceiveSessionResult> receiveTask = Task.Run(async () =>
+        {
+            IReliableByteStream accepted = await listener.AcceptAsync();
+
+            return await receiver.ReceiveAsync(
+                accepted,
+                test.Destination,
+                AcceptOffer);
+        });
+
+        using CancellationTokenSource cancellation = new();
+
+        Progress<FileTransferProgress> progress = new(value =>
+        {
+            if (value.BytesTransferred >= 64 * 1024)
+            {
+                cancellation.Cancel();
+            }
+        });
+
+        TcpFileSender sender =
+            new(SenderDevice, new TcpTransportConnector());
+
+        TransferFailedException failure =
+            await Assert.ThrowsAsync<TransferFailedException>(
+                async () => await sender.SendAsync(
+                    endpoint,
+                    source,
+                    progress: progress,
+                    cancellationToken: cancellation.Token));
+
+        Assert.AreEqual(
+            TransferFailureKind.Cancelled,
+            failure.Kind);
+
+        ReceiveSessionResult? receiveResult = null;
+        Exception? receiverFailure = null;
+
+        try
+        {
+            receiveResult =
+                await receiveTask.WaitAsync(TimeSpan.FromSeconds(5));
+        }
+        catch (TimeoutException)
+        {
+            Assert.Fail(
+                "Receiver did not terminate after sender cancellation.");
+        }
+        catch (Exception ex)
+        {
+            receiverFailure = ex;
+        }
+
+        Assert.IsTrue(
+            receiverFailure is not null ||
+            receiveResult is { Success: false });
+
+        Assert.IsEmpty(
+            Directory.GetFiles(test.Destination));
+    }
+    [TestMethod]
     public async Task MultipleFilesTransferInSingleSessionAsync()
     {
         using TestDirectory test = new();
@@ -479,4 +557,3 @@ public sealed class TcpFileTransferTests
         CancellationToken cancellationToken) =>
         ValueTask.FromResult(IncomingTransferDecision.Accept);
 }
-
