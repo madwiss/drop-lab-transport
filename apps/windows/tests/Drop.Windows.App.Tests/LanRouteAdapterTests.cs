@@ -1,4 +1,4 @@
-﻿using System.Net;
+using System.Net;
 using Drop.Discovery;
 using Drop.Routing;
 using Drop.Transport;
@@ -30,6 +30,54 @@ public sealed class TransportRouteDiscoveryTests
         Assert.IsTrue(candidate.Capabilities.HasFlag(RouteCapabilities.SupportsLargeTransfers));
     }
 
+    [TestMethod]
+    public void SelectPreferredUsesDiscoveredEndpointWithoutRecreatingIt()
+    {
+        DiscoveredDevice device = Device();
+
+        TransportRegistry registry = DefaultTransportRegistry.Create();
+        TransportCandidateResolver resolver = new(registry);
+        TransportRouteDiscoveryService discovery = new(resolver);
+
+        ThrowingEndpointFactory factory = new();
+
+        SelectedTransportRoute selected =
+            discovery.SelectPreferred(device, factory);
+
+        Assert.AreEqual(device.Port, selected.Endpoint.DiscoveryPort);
+    }
+
+    private sealed class ThrowingEndpointFactory : IRouteTransportFactory
+    {
+        public ITransportConnector CreateConnector(
+            ConnectionCandidate candidate)
+        {
+            return new ThrowingConnector();
+        }
+
+        public ITransportEndpoint CreateEndpoint(
+            ConnectionCandidate candidate,
+            DiscoveredDevice device)
+        {
+            throw new InvalidOperationException(
+                "CreateEndpoint must not be called for a discovered transport candidate.");
+        }
+
+        public StartedTransportListener CreateStartedListener()
+        {
+            throw new NotSupportedException();
+        }
+    }
+
+    private sealed class ThrowingConnector : ITransportConnector
+    {
+        public ValueTask<IReliableByteStream> ConnectAsync(
+            ITransportEndpoint endpoint,
+            CancellationToken cancellationToken = default)
+        {
+            throw new NotSupportedException();
+        }
+    }
     private static DiscoveredDevice Device() => new(
         Guid.NewGuid(),
         "Peer",

@@ -25,23 +25,10 @@ public sealed class TransportRouteDiscoveryService
     {
         ArgumentNullException.ThrowIfNull(device);
 
-        TransportDiscoveryContext context =
-            new(
-                device.DeviceId.ToString("D"),
-                device.Address.ToString(),
-                device.Port);
-
         IReadOnlyCollection<TransportCandidate> transportCandidates =
-            _candidateResolver.Resolve(context);
+            ResolveTransportCandidates(device);
 
-        ConnectionCandidate[] routes =
-            transportCandidates
-                .Select(TransportCandidateMapper.Map)
-                .ToArray();
-
-        return new PeerRoutes(
-            device.DeviceId.ToString("D"),
-            routes);
+        return BuildPeerRoutes(device, transportCandidates);
     }
 
     public SelectedTransportRoute SelectPreferred(
@@ -51,16 +38,50 @@ public sealed class TransportRouteDiscoveryService
         ArgumentNullException.ThrowIfNull(device);
         ArgumentNullException.ThrowIfNull(transportFactory);
 
-        PeerRoutes routes = DiscoverRoutes(device);
+        IReadOnlyCollection<TransportCandidate> transportCandidates =
+            ResolveTransportCandidates(device);
+
+        PeerRoutes routes =
+            BuildPeerRoutes(device, transportCandidates);
 
         ConnectionCandidate candidate =
             RouteSelector.SelectPreferred(routes)
             ?? throw new InvalidOperationException(
                 "No eligible route is available.");
 
+        TransportCandidate transportCandidate =
+            transportCandidates.Single(candidateOption =>
+                candidateOption.CandidateId == candidate.CandidateId);
+
         return new SelectedTransportRoute(
             candidate,
-            transportFactory.CreateEndpoint(candidate, device),
+            transportCandidate.Endpoint,
             transportFactory.CreateConnector(candidate));
+    }
+
+    private IReadOnlyCollection<TransportCandidate> ResolveTransportCandidates(
+        DiscoveredDevice device)
+    {
+        TransportDiscoveryContext context =
+            new(
+                device.DeviceId.ToString("D"),
+                device.Address.ToString(),
+                device.Port);
+
+        return _candidateResolver.Resolve(context);
+    }
+
+    private static PeerRoutes BuildPeerRoutes(
+        DiscoveredDevice device,
+        IReadOnlyCollection<TransportCandidate> transportCandidates)
+    {
+        ConnectionCandidate[] routes =
+            transportCandidates
+                .Select(TransportCandidateMapper.Map)
+                .ToArray();
+
+        return new PeerRoutes(
+            device.DeviceId.ToString("D"),
+            routes);
     }
 }
