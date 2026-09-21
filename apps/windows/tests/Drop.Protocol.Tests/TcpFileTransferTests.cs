@@ -42,6 +42,46 @@ public sealed class TcpFileTransferTests
     }
 
     [TestMethod]
+    public async Task OneGigabyteFileStreamsSuccessfullyAsync()
+    {
+        using TestDirectory test = new();
+
+        const long size = 1024L * 1024L * 1024L;
+        string sourceDirectory = Path.Combine(test.Root, "source");
+        Directory.CreateDirectory(sourceDirectory);
+
+        string source = Path.Combine(sourceDirectory, "one-gigabyte.bin");
+
+        byte[] block = RandomNumberGenerator.GetBytes(1024 * 1024);
+
+        await using (FileStream stream = new(
+            source,
+            FileMode.CreateNew,
+            FileAccess.Write,
+            FileShare.None,
+            block.Length,
+            FileOptions.Asynchronous | FileOptions.SequentialScan))
+        {
+            long remaining = size;
+
+            while (remaining > 0)
+            {
+                int count = (int)Math.Min(block.Length, remaining);
+                await stream.WriteAsync(block.AsMemory(0, count));
+                remaining -= count;
+            }
+        }
+
+        TransferPair result = await TransferAsync(source, test.Destination);
+
+        Assert.AreEqual(size, new FileInfo(result.ReceivedPath).Length);
+        Assert.AreEqual(
+            await HashFileAsync(source),
+            await HashFileAsync(result.ReceivedPath));
+        Assert.AreEqual(size, result.SendResult.Files.Single().BytesTransferred);
+        Assert.AreEqual(size, result.ReceiveResult.Files.Single().BytesReceived);
+    }
+    [TestMethod]
     public async Task MultiMegabyteFileStreamsSuccessfullyAsync()
     {
         using TestDirectory test = new();
